@@ -1,0 +1,476 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { broadcastAPI, whatsappAPI } from '../../services/api';
+import toast from 'react-hot-toast';
+import {
+  ArrowPathIcon,
+  ChartBarIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  MagnifyingGlassIcon,
+  MegaphoneIcon,
+  PhotoIcon,
+  PlayIcon,
+  PlusIcon,
+  ShieldCheckIcon,
+  TrashIcon,
+  UsersIcon
+} from '@heroicons/react/24/outline';
+
+export default function Broadcast() {
+  const [broadcasts, setBroadcasts] = useState([]);
+  const [whatsapp, setWhatsapp] = useState({});
+  const [stats, setStats] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState('');
+  const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
+  const fetchRef = useRef(false);
+
+  useEffect(() => {
+    fetchBroadcasts();
+  }, [pagination.page]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (!document.hidden) void fetchBroadcasts({ background: true });
+    }, 10000);
+    return () => window.clearInterval(interval);
+  }, [pagination.page]);
+
+  const metaReady = Boolean(whatsapp?.isConnected);
+  const metaVerified = whatsapp?.businessVerificationStatus === 'verified'
+    || whatsapp?.accountReviewStatus === 'APPROVED';
+
+  const fetchBroadcasts = async ({ background = false } = {}) => {
+    if (fetchRef.current) return;
+
+    fetchRef.current = true;
+    if (!background) setLoading(true);
+    if (background) setRefreshing(true);
+
+    try {
+      const [listResponse, statsResponse, whatsappResponse] = await Promise.all([
+        broadcastAPI.getBroadcasts({ page: pagination.page, limit: 20 }),
+        broadcastAPI.getStats(),
+        whatsappAPI.getConfig()
+      ]);
+      setBroadcasts(listResponse.data.data || []);
+      setPagination((current) => ({ ...current, ...listResponse.data }));
+      setStats(statsResponse.data.data || {});
+      setWhatsapp(whatsappResponse.data.data || {});
+    } catch (error) {
+      if (!background) toast.error(error.response?.data?.message || 'Failed to fetch broadcasts');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      fetchRef.current = false;
+    }
+  };
+
+  const handleStart = async (broadcast) => {
+    if (!metaReady) {
+      toast.error('Connect Meta WhatsApp before starting broadcasts');
+      return;
+    }
+
+    try {
+      await broadcastAPI.startBroadcast(broadcast._id);
+      toast.success('Broadcast started');
+      fetchBroadcasts();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to start broadcast');
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Delete this broadcast?')) return;
+
+    try {
+      await broadcastAPI.deleteBroadcast(id);
+      toast.success('Broadcast deleted');
+      fetchBroadcasts();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to delete broadcast');
+    }
+  };
+
+  const totals = useMemo(() => {
+    const sent = broadcasts.reduce((sum, item) => sum + (item.sentCount || 0), 0);
+    const failed = broadcasts.reduce((sum, item) => sum + (item.failedCount || 0), 0);
+    const recipients = broadcasts.reduce((sum, item) => sum + (item.totalRecipients || 0), 0);
+    const completed = broadcasts.filter((item) => item.status === 'completed').length;
+    const scheduled = broadcasts.filter((item) => item.status === 'scheduled').length;
+    const drafts = broadcasts.filter((item) => item.status === 'draft').length;
+    const processing = broadcasts.filter((item) => item.status === 'processing').length;
+    return { sent, failed, recipients, completed, scheduled, drafts, processing };
+  }, [broadcasts]);
+
+  const statusRows = [
+    { label: 'Draft', value: totals.drafts, color: 'bg-sky-500' },
+    { label: 'Scheduled', value: totals.scheduled || stats.scheduled || 0, color: 'bg-amber-400' },
+    { label: 'Processing', value: totals.processing || stats.processing || 0, color: 'bg-emerald-500' },
+    { label: 'Completed', value: totals.completed || stats.completed || 0, color: 'bg-green-600' },
+    { label: 'Failed', value: stats.failed || broadcasts.filter((item) => item.status === 'failed').length, color: 'bg-rose-500' }
+  ];
+  const deliveryPercent = totals.recipients ? Math.round((totals.sent / totals.recipients) * 100) : 0;
+  const filteredBroadcasts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return broadcasts;
+
+    return broadcasts.filter((broadcast) => [
+      broadcast.name,
+      broadcast.message,
+      broadcast.status,
+      broadcast.type,
+      broadcast.templateName
+    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(query)));
+  }, [broadcasts, search]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[0.14em] text-primary">Broadcasts</p>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-gray-950">Meta Campaign Console</h1>
+          <p className="mt-1 text-sm text-gray-600">Create, schedule, and monitor WhatsApp template campaigns from one place.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => fetchBroadcasts()}
+            className="btn-outline inline-flex items-center justify-center gap-2 rounded-2xl"
+            disabled={loading || refreshing}
+          >
+            <ArrowPathIcon className={`h-5 w-5 ${loading || refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <Link to="/broadcast/create" className="btn-primary inline-flex items-center justify-center gap-2 rounded-2xl">
+            <PlusIcon className="h-5 w-5" />
+            New Broadcast
+          </Link>
+        </div>
+      </div>
+
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_.8fr]">
+        <div className="overflow-hidden rounded-[28px] border border-emerald-100 bg-white shadow-[0_24px_70px_rgba(7,94,84,.10)]">
+          <div className="relative overflow-hidden bg-gradient-primary p-6 text-white lg:p-8">
+            <div className="absolute -right-16 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+            <div className="relative flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-sm font-semibold text-emerald-50">
+                  <span className={`h-2.5 w-2.5 rounded-full ${metaReady ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                  <ShieldCheckIcon className="h-4 w-4" />
+                  Meta WhatsApp
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight">{metaReady ? 'Broadcast channel connected' : 'Connect Meta before broadcasting'}</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/78">
+                  {metaReady
+                    ? `${whatsapp.phoneNumber || 'Your WhatsApp number'} is ready for approved template campaigns.`
+                    : 'Broadcasts require a connected Meta WhatsApp Business number and approved message templates.'}
+                </p>
+              </div>
+              <Link
+                to="/whatsapp-setup"
+                className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-white px-5 py-3 text-sm font-bold text-primary shadow-lg shadow-black/10 transition hover:-translate-y-0.5"
+              >
+                {metaReady ? 'Manage Meta' : 'Connect Meta'}
+              </Link>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-3">
+            <InfoTile label="Number" value={whatsapp.phoneNumber || 'Not connected'} />
+            <InfoTile label="Verification" value={metaVerified ? 'Verified' : metaReady ? 'Review pending' : 'Not connected'} />
+            <InfoTile label="Templates" value="Approved only" />
+          </div>
+        </div>
+
+        <div className="card p-6 shadow-[0_18px_50px_rgba(7,94,84,.08)]">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-950">Campaign Summary</h2>
+              <p className="mt-1 text-sm text-gray-600">Current page performance snapshot.</p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${deliveryPercent > 80 ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
+              {deliveryPercent}% sent
+            </span>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <SummaryTile label="Total" value={pagination.total || 0} icon={MegaphoneIcon} />
+            <SummaryTile label="Processing" value={stats.processing || 0} icon={ArrowPathIcon} />
+            <SummaryTile label="Recipients" value={totals.recipients} icon={UsersIcon} />
+            <SummaryTile label="Sent" value={totals.sent} icon={CheckCircleIcon} />
+          </div>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
+        <div className="card p-6">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-950">Campaign Pipeline</h2>
+              <p className="text-sm text-gray-600">Status distribution for active broadcast records.</p>
+            </div>
+            <ChartBarIcon className="h-6 w-6 text-primary" />
+          </div>
+          <MiniBarChart rows={statusRows} />
+        </div>
+        <div className="card p-6">
+          <h2 className="text-lg font-bold text-gray-950">Delivery Health</h2>
+          <p className="mt-1 text-sm text-gray-600">Sent vs failed across visible campaigns.</p>
+          <div className="mt-5 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
+            <div className="mb-2 flex justify-between text-sm">
+              <span className="font-semibold text-gray-600">Successful sends</span>
+              <span className="font-bold text-gray-950">{deliveryPercent}%</span>
+            </div>
+            <div className="h-3 overflow-hidden rounded-full bg-gray-200/70">
+              <div className="h-full rounded-full bg-gradient-to-r from-primary to-green-500" style={{ width: `${deliveryPercent}%` }} />
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <InfoTile label="Sent" value={totals.sent} />
+              <InfoTile label="Failed" value={totals.failed} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {!metaReady && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950">
+          <div className="flex items-start gap-3">
+            <ExclamationTriangleIcon className="h-6 w-6 shrink-0 text-amber-700" />
+            <div>
+              <p className="font-semibold">Meta WhatsApp is not connected</p>
+              <p className="mt-1 text-sm text-amber-800">You can prepare drafts, but sending requires Meta setup and approved templates.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="card overflow-hidden shadow-[0_18px_50px_rgba(7,94,84,.08)]">
+        <div className="border-b border-gray-100 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-950">Broadcast History</h2>
+              <p className="text-sm text-gray-600">Auto-refreshes while broadcasts are processing.</p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <label className="relative block w-full sm:w-80">
+                <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search campaign, status, message..."
+                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-[#25D366] focus:ring-4 focus:ring-emerald-100"
+                />
+              </label>
+              <span className="inline-flex w-max items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-primary">
+                <span className={`h-2 w-2 rounded-full ${refreshing ? 'bg-amber-400' : 'bg-green-500'}`}></span>
+                {filteredBroadcasts.length}/{broadcasts.length}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="table-header">
+              <tr>
+                <th className="px-6 py-4">Campaign</th>
+                <th className="px-6 py-4">Audience</th>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Progress</th>
+                <th className="px-6 py-4">Created</th>
+                <th className="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-12 text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+                  </td>
+                </tr>
+              ) : filteredBroadcasts.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-14 text-center">
+                    <MegaphoneIcon className="mx-auto h-10 w-10 text-gray-300" />
+                    <p className="mt-3 font-semibold text-gray-900">{search ? 'No matching broadcasts' : 'No broadcasts yet'}</p>
+                    <p className="mt-1 text-sm text-gray-500">{search ? 'Try a different campaign name, status, or message.' : 'Create your first Meta template campaign.'}</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredBroadcasts.map((broadcast) => (
+                  <tr key={broadcast._id} className="hover:bg-emerald-50/70">
+                    <td className="px-6 py-4">
+                      <div className="min-w-[260px]">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-primary ring-1 ring-emerald-100">
+                            <MegaphoneIcon className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <p className="font-semibold text-gray-950">{broadcast.name}</p>
+                            <p className="mt-0.5 text-xs font-semibold capitalize text-primary">{broadcast.type || 'utility'} template</p>
+                          </div>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          {broadcast.media?.url && <PhotoIcon className="h-4 w-4 shrink-0 text-gray-400" />}
+                          <p className="max-w-md truncate text-sm text-gray-500">{broadcast.message}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="font-semibold text-gray-900">{broadcast.totalRecipients || 0}</div>
+                      <p className="text-xs text-gray-500">recipients</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <StatusBadge status={broadcast.status} />
+                    </td>
+                    <td className="px-6 py-4">
+                      <Progress sent={broadcast.sentCount || 0} failed={broadcast.failedCount || 0} total={broadcast.totalRecipients || 0} />
+                    </td>
+                    <td className="px-6 py-4 text-gray-600">
+                      {new Date(broadcast.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center justify-end gap-2">
+                        {(broadcast.status === 'draft' || broadcast.status === 'scheduled') && (
+                          <button
+                            type="button"
+                            onClick={() => handleStart(broadcast)}
+                            className="rounded-lg p-2 text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Start"
+                            disabled={!metaReady}
+                          >
+                            <PlayIcon className="h-5 w-5" />
+                          </button>
+                        )}
+                        {broadcast.status === 'processing' && (
+                          <div className="rounded-lg p-2">
+                            <ArrowPathIcon className="h-5 w-5 animate-spin text-primary" />
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(broadcast._id)}
+                          className="rounded-lg p-2 text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          title="Delete"
+                          disabled={broadcast.status === 'processing'}
+                        >
+                          <TrashIcon className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {pagination.pages > 1 && (
+          <div className="flex items-center justify-between border-t border-gray-100 px-6 py-4">
+            <p className="text-sm text-gray-600">Page {pagination.page} of {pagination.pages}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
+                disabled={pagination.page === 1}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
+                disabled={pagination.page === pagination.pages}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoTile({ label, value }) {
+  return (
+    <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+      <p className="text-xs font-semibold uppercase text-gray-500">{label}</p>
+      <p className="mt-1 text-sm font-bold text-gray-950">{value}</p>
+    </div>
+  );
+}
+
+function SummaryTile({ label, value, icon: Icon }) {
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-primary ring-1 ring-emerald-100">
+        <Icon className="h-5 w-5" />
+      </div>
+      <p className="mt-3 text-xs font-bold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold tracking-tight text-gray-950">{value}</p>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const styles = {
+    draft: 'bg-sky-100 text-sky-800',
+    scheduled: 'bg-amber-100 text-amber-900',
+    processing: 'bg-emerald-100 text-emerald-800',
+    completed: 'bg-green-100 text-green-800',
+    failed: 'bg-rose-100 text-rose-800',
+    cancelled: 'bg-gray-100 text-gray-700'
+  };
+
+  return (
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-bold capitalize ${styles[status] || styles.draft}`}>
+      {status || 'draft'}
+    </span>
+  );
+}
+
+function Progress({ sent, failed, total }) {
+  const completed = sent + failed;
+  const percent = total ? Math.min(Math.round((completed / total) * 100), 100) : 0;
+
+  return (
+    <div className="min-w-[180px]">
+      <div className="mb-2 flex justify-between text-xs font-semibold text-gray-500">
+        <span>{completed}/{total}</span>
+        <span>{percent}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }}></div>
+      </div>
+      <p className="mt-1 text-xs text-gray-500">{sent} sent, {failed} failed</p>
+    </div>
+  );
+}
+
+function MiniBarChart({ rows }) {
+  const max = Math.max(...rows.map((row) => Number(row.value) || 0), 1);
+
+  return (
+    <div className="space-y-4">
+      {rows.map((row) => {
+        const value = Number(row.value) || 0;
+        const width = value ? Math.max(8, Math.round((value / max) * 100)) : 2;
+
+        return (
+          <div key={row.label}>
+            <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+              <span className="font-semibold text-gray-600">{row.label}</span>
+              <span className="font-bold text-gray-950">{value}</span>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-gray-200/70">
+              <div className={`h-full rounded-full ${row.color} transition-all`} style={{ width: `${width}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
