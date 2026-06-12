@@ -85,6 +85,13 @@ const buildRecipients = (leads) => {
   }, []);
 };
 
+const broadcastEligibleLeadQuery = (schoolId, extra = {}) => ({
+  schoolId,
+  marketingOptOut: { $ne: true },
+  tags: { $nin: ['opted_out', 'do_not_send', 'unsubscribe', 'unsubscribed', 'stop'] },
+  ...extra
+});
+
 const validateTemplateBroadcastPayload = (template, templateVariables = [], media) => {
   const variableKeys = extractBodyVariables(template.body);
   const values = Array.isArray(templateVariables) ? templateVariables : [];
@@ -322,27 +329,24 @@ exports.createBroadcast = async (req, res) => {
 
     if (recipientType === 'all') {
       // Get all leads
-      const leads = await Lead.find({ schoolId: req.schoolId }).select('name phone');
+      const leads = await Lead.find(broadcastEligibleLeadQuery(req.schoolId)).select('name phone');
       recipients = buildRecipients(leads);
     } else if (recipientType === 'status') {
       // Get leads by status
-      const leads = await Lead.find({ 
-        schoolId: req.schoolId, 
+      const leads = await Lead.find(broadcastEligibleLeadQuery(req.schoolId, {
         status: req.body.statusFilter 
-      }).select('name phone');
+      })).select('name phone');
       recipients = buildRecipients(leads);
     } else if (recipientType === 'tag') {
-      const leads = await Lead.find({
-        schoolId: req.schoolId,
+      const leads = await Lead.find(broadcastEligibleLeadQuery(req.schoolId, {
         tags: tagFilter
-      }).select('name phone');
+      })).select('name phone');
       recipients = buildRecipients(leads);
     } else if (recipientType === 'selected') {
       // Get specific leads
-      const leads = await Lead.find({ 
+      const leads = await Lead.find(broadcastEligibleLeadQuery(req.schoolId, {
         _id: { $in: recipientIds },
-        schoolId: req.schoolId 
-      }).select('name phone');
+      })).select('name phone');
       recipients = buildRecipients(leads);
     }
 

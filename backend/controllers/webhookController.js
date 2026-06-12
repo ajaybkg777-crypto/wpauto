@@ -22,6 +22,39 @@ const buildStepMessage = (step) => {
 
 const normalizeMessage = (message = '') => String(message).trim().toLowerCase();
 const webhookDebugEnabled = () => process.env.WEBHOOK_DEBUG !== 'false';
+const isOptOutMessage = (message = '') => {
+  const value = normalizeMessage(message)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return [
+    'stop',
+    'unsubscribe',
+    'unsub',
+    'opt out',
+    'optout',
+    'do not send',
+    'dont send',
+    'don t send',
+    'no message',
+    'no messages',
+    'band',
+    'band karo',
+    'message band',
+    'msg band',
+    'nahi bhejo',
+    'mat bhejo'
+  ].includes(value);
+};
+const isOptInMessage = (message = '') => {
+  const value = normalizeMessage(message)
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return ['start', 'subscribe', 'yes', 'resume', 'continue'].includes(value);
+};
 
 const webhookLog = (...args) => {
   if (webhookDebugEnabled()) {
@@ -457,6 +490,55 @@ const sendBotResponse = async (schoolId, lead, response, rule = null) => {
   return result;
 };
 
+const handleOptOut = async (schoolId, lead, message) => {
+  const now = new Date();
+  await Lead.findByIdAndUpdate(lead._id, {
+    $set: {
+      marketingOptOut: true,
+      marketingOptOutAt: now,
+      marketingOptOutReason: message,
+      status: lead.status === 'converted' ? lead.status : 'not_interested',
+      lastMessage: message,
+      lastMessageAt: now,
+      'chatbotSession.isActive': false,
+      'chatbotSession.updatedAt': now
+    },
+    $addToSet: {
+      tags: { $each: ['opted_out', 'do_not_send'] }
+    }
+  });
+
+  return sendBotResponse(
+    schoolId,
+    lead,
+    'You have been opted out from future marketing messages. If this was a mistake, reply START.'
+  );
+};
+
+const handleOptIn = async (schoolId, lead) => {
+  const now = new Date();
+  await Lead.findByIdAndUpdate(lead._id, {
+    $set: {
+      marketingOptOut: false,
+      marketingOptOutReason: '',
+      lastMessageAt: now,
+      'chatbotSession.updatedAt': now
+    },
+    $unset: {
+      marketingOptOutAt: ''
+    },
+    $pull: {
+      tags: { $in: ['opted_out', 'do_not_send', 'unsubscribe', 'unsubscribed', 'stop'] }
+    }
+  });
+
+  return sendBotResponse(
+    schoolId,
+    lead,
+    'You are subscribed again. You can reply STOP anytime to opt out from marketing messages.'
+  );
+};
+
 // @desc    Webhook for incoming WhatsApp messages
 // @route   POST /api/webhook/whatsapp
 // @access  Public
@@ -656,6 +738,18 @@ const handleIncomingMessage = async (payload) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     )
   ]);
+
+  if (isOptOutMessage(message)) {
+    webhookLog('opt-out received', { schoolId: school._id.toString(), leadId: lead._id.toString(), phone });
+    await handleOptOut(school._id, lead, message);
+    return;
+  }
+
+  if (isOptInMessage(message) && lead.marketingOptOut) {
+    webhookLog('opt-in received', { schoolId: school._id.toString(), leadId: lead._id.toString(), phone });
+    await handleOptIn(school._id, lead);
+    return;
+  }
 
   // Check for chatbot response
   await processChatbot(school._id, lead, message);
