@@ -94,6 +94,13 @@ const leadSchema = new mongoose.Schema({
   tags: [{
     type: String
   }],
+  marketingOptOut: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  marketingOptOutAt: Date,
+  marketingOptOutReason: String,
   chatbotSession: {
     ruleId: {
       type: mongoose.Schema.Types.ObjectId,
