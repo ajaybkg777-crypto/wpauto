@@ -9,13 +9,17 @@ const { asyncHandler, errorHandler, notFound } = require('./middleware/errorHand
 const { processDueScheduledBroadcasts } = require('./controllers/broadcastController');
 const { handleOnboardingCallback } = require('./controllers/whatsappController');
 const { runDataRetentionCleanup } = require('./services/dataRetentionService');
+const { runBootstrap } = require('./services/bootstrapService');
 
 // Load env vars
 dotenv.config();
 validateEnv();
 
-// Connect to database
-connectDB();
+// Connect to database and seed required runtime records
+connectDB().then(() => runBootstrap()).catch((error) => {
+  console.error(`Bootstrap error: ${error.message}`);
+  process.exit(1);
+});
 
 // Route files
 const authRoutes = require('./routes/auth');
