@@ -507,10 +507,10 @@ export default function CreateBroadcast() {
         .bb-avatar { width: 30px; height: 30px; border-radius: 999px; background: #25D366; color: #063b2f; display: grid; place-items: center; font-weight: 950; font-size: 12px; }
         .bb-chat { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; background: radial-gradient(circle at top left,rgba(255,255,255,.55),transparent 30%), #ece5dd; overscroll-behavior: contain; }
         .bb-date { width: max-content; margin: 0 auto 10px; border-radius: 999px; background: rgba(255,255,255,.75); color: #64748b; padding: 4px 9px; font-size: 10px; font-weight: 900; }
-        .bb-bubble { max-width: 92%; background: #fff; border-radius: 15px 15px 15px 5px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,.07); }
-        .bb-bubble img { width: 100%; max-height: 148px; object-fit: cover; display: block; }
-        .bb-header-placeholder { height: 112px; display: grid; place-items: center; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 900; }
-        .bb-bubble-body { padding: 10px 12px 4px; white-space: pre-wrap; font-size: 12px; line-height: 1.55; color: #1f2937; word-break: break-word; }
+        .bb-bubble { width: calc(100% - 8px); max-width: 94%; background: #fff; border-radius: 15px 15px 15px 5px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,.07); }
+        .bb-bubble img { width: 100%; aspect-ratio: 1.91 / 1; max-height: 158px; object-fit: cover; display: block; }
+        .bb-header-placeholder { aspect-ratio: 1.91 / 1; min-height: 112px; display: grid; place-items: center; background: #f1f5f9; color: #64748b; font-size: 12px; font-weight: 900; }
+        .bb-bubble-body { padding: 10px 12px 4px; white-space: pre-wrap; font-size: 12px; line-height: 1.55; color: #1f2937; overflow-wrap: break-word; word-break: normal; }
         .bb-footer { padding: 2px 12px; color: #94a3b8; font-size: 10px; }
         .bb-time { padding: 0 12px 8px; text-align: right; color: #94a3b8; font-size: 9px; }
         .bb-cta-btn { border-top: 1px solid #eef2f7; width: 100%; min-height: 36px; background: #fff; color: #128c7e; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 6px; }

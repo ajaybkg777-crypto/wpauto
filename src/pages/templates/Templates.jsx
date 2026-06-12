@@ -229,7 +229,7 @@ export default function Templates() {
   const fetchTemplates = async () => {
     setLoading(true);
     try {
-      const response = await templateAPI.getTemplates();
+      const response = await templateAPI.syncTemplates().catch(() => templateAPI.getTemplates());
       setTemplates(response.data.data || []);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to fetch templates');
@@ -322,11 +322,17 @@ export default function Templates() {
         media: {
           type: response.data.data.type || headerType,
           url: response.data.data.publicUrl || response.data.data.url,
+          localUrl: response.data.data.localUrl || response.data.data.url,
+          handle: response.data.data.handle || '',
           filename: response.data.data.filename,
           mimetype: response.data.data.mimetype
         }
       }));
-      toast.success('Media sample uploaded');
+      if (response.data.data.metaUploadError) {
+        toast.error(`Uploaded locally, but Meta sample failed: ${response.data.data.metaUploadError}`);
+      } else {
+        toast.success('Media sample uploaded to Meta');
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || 'Upload failed');
     } finally {
@@ -419,11 +425,11 @@ export default function Templates() {
   };
 
   const deleteTemplate = async (id) => {
-    if (!window.confirm('Delete this template?')) return;
+    if (!window.confirm('Delete this template from software and Meta WhatsApp Manager?')) return;
     try {
-      await templateAPI.deleteTemplate(id);
-      toast.success('Template deleted');
-      await fetchTemplates();
+      const response = await templateAPI.deleteTemplate(id);
+      toast.success(response.data.message || 'Template deleted from software and Meta');
+      setTemplates((current) => current.filter((template) => template._id !== id));
     } catch (error) {
       toast.error(error.response?.data?.message || 'Delete failed');
     }
@@ -718,12 +724,12 @@ export default function Templates() {
         .tb-chat { flex:1; min-height:0; overflow-y:auto; padding:12px; background:radial-gradient(circle at top left,rgba(255,255,255,.55),transparent 30%),#ece5dd; overscroll-behavior:contain; }
         .tb-chat::-webkit-scrollbar { width:5px; } .tb-chat::-webkit-scrollbar-thumb { background:rgba(7,94,84,.28); border-radius:999px; }
         .tb-date { width:max-content; margin:0 auto 10px; border-radius:999px; background:rgba(255,255,255,.75); color:#64748b; padding:4px 10px; font-size:10px; font-weight:900; }
-        .tb-bubble { max-width:92%; background:#fff; border-radius:16px 16px 16px 5px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,.07); }
-        .tb-bubble-media { width:100%; height:156px; background:#f1f5f9; display:grid; place-items:center; color:#64748b; }
+        .tb-bubble { width:calc(100% - 8px); max-width:94%; background:#fff; border-radius:16px 16px 16px 5px; overflow:hidden; box-shadow:0 4px 12px rgba(0,0,0,.07); }
+        .tb-bubble-media { width:100%; aspect-ratio:1.91 / 1; min-height:142px; max-height:172px; background:#f1f5f9; display:grid; place-items:center; color:#64748b; }
         .tb-bubble-media img, .tb-bubble-media video { width:100%; height:100%; object-fit:cover; }
         .tb-document-preview { padding:16px; display:flex; align-items:center; gap:10px; background:#f8fafc; color:#0f2b63; font-weight:900; }
         .tb-header-text { padding:12px 13px 0; color:#0f172a; font-size:14px; font-weight:900; }
-        .tb-body-preview { padding:10px 13px 4px; white-space:pre-wrap; word-break:break-word; color:#1f2937; font-size:13px; line-height:1.55; }
+        .tb-body-preview { padding:10px 13px 4px; white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; color:#1f2937; font-size:13px; line-height:1.55; }
         .tb-footer-preview { padding:0 13px 4px; color:#94a3b8; font-size:11px; }
         .tb-time { padding:0 13px 8px; text-align:right; color:#94a3b8; font-size:10px; }
         .tb-preview-button { width:100%; min-height:38px; border:0; border-top:1px solid #eef2f7; background:#fff; color:#128c7e; display:flex; align-items:center; justify-content:center; gap:7px; font-size:12px; font-weight:900; cursor:pointer; }

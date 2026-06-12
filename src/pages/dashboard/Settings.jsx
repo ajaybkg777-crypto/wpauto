@@ -29,6 +29,15 @@ export default function Settings() {
     logo: '',
     branding: {
       includeLogoInMessages: true
+    },
+    admissionAutomation: {
+      processText: '',
+      documentsText: '',
+      feeStructureText: '',
+      brochurePdfUrl: '',
+      brochureFilename: 'Admission-Brochure.pdf',
+      schoolPhotoUrls: [],
+      campusVideoUrl: ''
     }
   });
   const [whatsapp, setWhatsapp] = useState({
@@ -42,6 +51,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingAdmissionMedia, setUploadingAdmissionMedia] = useState('');
 
   const onboardingSteps = useMemo(() => {
     const connected = whatsapp.isConnected;
@@ -135,6 +145,25 @@ export default function Settings() {
     } finally {
       setUploadingLogo(false);
       e.target.value = '';
+    }
+  };
+
+  const handleAdmissionMediaUpload = async (type, file) => {
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append('type', type);
+    formData.append('file', file);
+
+    setUploadingAdmissionMedia(type);
+    try {
+      const response = await schoolAPI.uploadAdmissionMedia(formData);
+      setProfile(response.data.data.school);
+      toast.success(type === 'brochure' ? 'Brochure uploaded' : type === 'photo' ? 'School photo uploaded' : 'Campus video uploaded');
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Upload failed');
+    } finally {
+      setUploadingAdmissionMedia('');
     }
   };
 
@@ -322,6 +351,41 @@ export default function Settings() {
                 <input id="includeLogoInMessages" type="checkbox" name="branding.includeLogoInMessages" checked={profile.branding?.includeLogoInMessages !== false} onChange={handleProfileChange} className="h-5 w-5 rounded border-gray-300 text-primary focus:ring-primary" />
               </label>
 
+              <div className="rounded-3xl border border-slate-200 bg-slate-50/70 p-4 md:col-span-2">
+                <div className="mb-4">
+                  <label className="block text-sm font-bold text-gray-800">Admission Automation Media</label>
+                  <p className="mt-1 text-xs font-medium text-gray-500">Upload files once. The system creates the public links and sends them automatically in admission flow.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <AdmissionUploadCard
+                    title="Brochure PDF"
+                    hint={profile.admissionAutomation?.brochurePdfUrl ? profile.admissionAutomation?.brochureFilename || 'Uploaded' : 'Upload PDF'}
+                    accept="application/pdf"
+                    loading={uploadingAdmissionMedia === 'brochure'}
+                    onUpload={(file) => handleAdmissionMediaUpload('brochure', file)}
+                  />
+                  <AdmissionUploadCard
+                    title="School Photos"
+                    hint={`${profile.admissionAutomation?.schoolPhotoUrls?.length || 0} photo(s) uploaded`}
+                    accept="image/*"
+                    loading={uploadingAdmissionMedia === 'photo'}
+                    onUpload={(file) => handleAdmissionMediaUpload('photo', file)}
+                  />
+                  <AdmissionUploadCard
+                    title="Campus Video"
+                    hint={profile.admissionAutomation?.campusVideoUrl ? 'Video uploaded' : 'Upload MP4/video'}
+                    accept="video/*"
+                    loading={uploadingAdmissionMedia === 'video'}
+                    onUpload={(file) => handleAdmissionMediaUpload('video', file)}
+                  />
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <SettingTextarea label="Admission Process" name="admissionAutomation.processText" value={profile.admissionAutomation?.processText || ''} onChange={handleProfileChange} placeholder="Admission Process&#10;1. Submit form&#10;2. Counselor call..." />
+                  <SettingTextarea label="Required Documents" name="admissionAutomation.documentsText" value={profile.admissionAutomation?.documentsText || ''} onChange={handleProfileChange} placeholder="Required Documents&#10;- Aadhaar/Birth certificate&#10;- Marksheet..." />
+                  <SettingTextarea label="Fee Structure" name="admissionAutomation.feeStructureText" value={profile.admissionAutomation?.feeStructureText || ''} onChange={handleProfileChange} placeholder="Class-wise fee information or counselor note..." />
+                </div>
+              </div>
+
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end md:col-span-2">
                 <button type="button" onClick={fetchProfile} className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 text-sm font-bold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700">
                   <ArrowPathIcon className="h-4 w-4" />
@@ -359,7 +423,7 @@ export default function Settings() {
               </div>
             </div>
             <div className="mt-5 space-y-3">
-              <LimitRow label="Contacts" value={profile.limits?.maxLeads || 0} />
+              <LimitRow label="Contacts" value="Unlimited" />
               <LimitRow label="Daily Messages" value={profile.limits?.maxMessagesPerDay || 0} />
               <LimitRow label="Broadcasts" value={profile.limits?.maxBroadcasts || 0} />
             </div>
@@ -457,6 +521,43 @@ function SettingInput({ icon: Icon, label, helper, compact = false, ...props }) 
   );
 }
 
+function SettingTextarea({ label, helper, ...props }) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-bold text-gray-800">{label}</label>
+      <textarea
+        {...props}
+        rows={5}
+        className="w-full resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold leading-6 text-slate-900 outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-300 focus:border-[#25D366] focus:ring-4 focus:ring-emerald-100"
+      />
+      {helper && <p className="mt-2 text-xs font-medium leading-5 text-gray-500">{helper}</p>}
+    </div>
+  );
+}
+
+function AdmissionUploadCard({ title, hint, accept, loading, onUpload }) {
+  return (
+    <label className={`block rounded-2xl border bg-white p-4 shadow-sm transition ${loading ? 'border-emerald-200 ring-4 ring-emerald-50' : 'border-slate-200 hover:border-emerald-200 hover:shadow-md'}`}>
+      <span className="block text-sm font-bold text-slate-950">{title}</span>
+      <span className="mt-1 block min-h-[18px] truncate text-xs font-medium text-slate-500">{hint}</span>
+      <input
+        type="file"
+        accept={accept}
+        disabled={loading}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          onUpload(file);
+        }}
+        className="mt-3 block w-full text-xs font-semibold text-slate-600 file:mr-3 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-3 file:py-2 file:text-xs file:font-bold file:text-emerald-700 hover:file:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+      />
+      <span className="mt-2 block text-xs font-semibold text-slate-400">
+        {loading ? 'Uploading...' : 'Up to 25MB'}
+      </span>
+    </label>
+  );
+}
+
 function MetaRow({ label, value }) {
   return (
     <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
@@ -470,7 +571,7 @@ function LimitRow({ label, value }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
       <span className="text-sm font-semibold text-slate-600">{label}</span>
-      <span className="text-sm font-bold text-slate-950">{Number(value).toLocaleString()}</span>
+      <span className="text-sm font-bold text-slate-950">{typeof value === 'number' ? value.toLocaleString() : value}</span>
     </div>
   );
 }

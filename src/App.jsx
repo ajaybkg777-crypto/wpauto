@@ -20,6 +20,7 @@ import Subscription from './pages/subscription/Subscription';
 import Settings from './pages/dashboard/Settings';
 import WhatsAppSetup from './pages/dashboard/WhatsAppSetup';
 import Analytics from './pages/dashboard/Analytics';
+import LiveChat from './pages/chat/LiveChat';
 
 function App() {
   return (
@@ -51,6 +52,7 @@ function App() {
             <Route path="whatsapp-setup" element={<WhatsAppSetup />} />
             <Route path="leads" element={<Leads />} />
             <Route path="leads/:id" element={<LeadDetail />} />
+            <Route path="live-chat" element={<LiveChat />} />
             <Route path="broadcast" element={<Broadcast />} />
             <Route path="broadcast/create" element={<CreateBroadcast />} />
             <Route path="templates" element={<Templates />} />

@@ -20,6 +20,7 @@ import {
 const menuItems = [
   { name: 'Dashboard', path: '/dashboard', icon: HomeIcon },
   { name: 'WhatsApp Setup', path: '/whatsapp-setup', icon: ChatBubbleLeftRightIcon },
+  { name: 'Live Chat', path: '/live-chat', icon: ChatBubbleLeftRightIcon },
   { name: 'Contacts', path: '/leads', icon: UsersIcon },
   { name: 'Broadcast', path: '/broadcast', icon: MegaphoneIcon },
   { name: 'Templates', path: '/templates', icon: DocumentTextIcon },

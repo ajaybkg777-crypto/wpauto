@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { chatbotAPI } from '../../services/api';
 import {
   MagnifyingGlassIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline';
 
 const NODE_W = 220;
@@ -47,6 +48,7 @@ export function flowToGraph(flow) {
         value: action.value || (action.label || `option_${actionIndex + 1}`).toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
         response: action.response || '',
         addTags: action.addTags || [],
+        sendAdmissionInfo: Boolean(action.sendAdmissionInfo),
         setStatus: action.setStatus || '',
         nextStepId: action.nextStepId || action.next || '',
         endFlow: action.endFlow || false,
@@ -70,6 +72,7 @@ export function flowToGraph(flow) {
     },
     tags: '',
     status: '',
+    sendAdmissionInfo: Boolean(step.sendAdmissionInfo),
   }));
   const edges = [];
   normalizedSteps.forEach((step) => {
@@ -100,6 +103,7 @@ function jsonToGraph(payload) {
       stepData: node.stepData || null,
       tags: node.tags || '',
       status: node.status || '',
+      sendAdmissionInfo: Boolean(node.sendAdmissionInfo),
     }));
 
     const ids = new Set(importedNodes.map((node) => node.id));
@@ -280,6 +284,7 @@ const ruleToGraph = (rule) => {
         response: rule.response || graph.nodes[0].response,
         tags: (rule.actions?.addTags || []).join(', '),
         status: rule.actions?.setStatus || '',
+        sendAdmissionInfo: Boolean(rule.actions?.sendAdmissionInfo),
       };
     }
     return graph;
@@ -294,6 +299,7 @@ const ruleToGraph = (rule) => {
     response: rule?.response || rule?.fallbackMessage || '',
     tags: (rule?.actions?.addTags || []).join(', '),
     status: rule?.actions?.setStatus || '',
+    sendAdmissionInfo: Boolean(rule?.actions?.sendAdmissionInfo),
   };
   return { nodes: [node], edges: [] };
 };
@@ -333,6 +339,7 @@ const createRulePayload = (nodes, edges, existingKeyword = '') => {
     actions: {
       addTags: String(startNode?.tags || '').split(',').map((item) => item.trim()).filter(Boolean),
       setStatus: startNode?.status || undefined,
+      sendAdmissionInfo: Boolean(startNode?.sendAdmissionInfo),
     },
     flow,
     matchType: 'contains',
@@ -500,6 +507,10 @@ function PropPanel({ node, edge, nodes, onChange, onDelete, onClose, onEdgeLabel
       <label>Response message<textarea value={node.response || ''} onChange={(event) => onChange(node.id, 'response', event.target.value)} placeholder="Bot reply when this node is reached" /></label>
       <label>Tags<input value={node.tags || ''} onChange={(event) => onChange(node.id, 'tags', event.target.value)} placeholder="Admission Interested, Lead" /></label>
       <label>Lead status<select value={node.status || ''} onChange={(event) => onChange(node.id, 'status', event.target.value)}>{STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}</select></label>
+      <label className="chatbot-checkline">
+        <input type="checkbox" checked={Boolean(node.sendAdmissionInfo)} onChange={(event) => onChange(node.id, 'sendAdmissionInfo', event.target.checked)} />
+        <span>Send admission info pack</span>
+      </label>
       <button type="button" className="chatbot-delete" onClick={() => onDelete('node', node.id)}>Delete node</button>
     </div>
   );
@@ -755,7 +766,7 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
 
   const loadDemo = useCallback(() => {
     const a = { id: uid(), type: 'keyword', x: 80, y: 180, label: 'Welcome / Hi', keyword: 'hi, hello, namaste', response: 'Welcome! Choose an option:\n1. Admission\n2. Fees\n3. Counselor', tags: '', status: '' };
-    const b = { id: uid(), type: 'flow', x: 400, y: 80, label: 'Admission flow', keyword: 'admission, interested', response: 'Are you interested in admission?', tags: 'Admission Interested', status: 'interested' };
+    const b = { id: uid(), type: 'flow', x: 400, y: 80, label: 'Admission flow', keyword: 'admission, interested', response: 'Are you interested in admission?', tags: 'Admission Interested', status: 'interested', sendAdmissionInfo: true };
     const c = { id: uid(), type: 'keyword', x: 400, y: 300, label: 'Fees reply', keyword: 'fees, price, cost', response: 'Fees info at {{2}}\nReply counselor for callback.', tags: 'Fees Requested', status: 'pending' };
     const d = { id: uid(), type: 'flow', x: 740, y: 80, label: 'Ask class', keyword: 'yes / 1', response: 'Which class are you interested in?', tags: '', status: '' };
     const e = { id: uid(), type: 'keyword', x: 740, y: 300, label: 'Counselor callback', keyword: 'counselor, call', response: 'Callback requested. Our counselor will contact you soon.', tags: 'Counselor Requested', status: 'follow_up' };
@@ -827,6 +838,7 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
       response: type === 'fallback' ? 'Sorry, I did not understand. Please choose one of the options.' : '',
       tags: '',
       status: '',
+      sendAdmissionInfo: false,
     };
     pushHistory([...nodes, node], edges);
     setSelectedNodeId(node.id);
@@ -913,6 +925,24 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
       toast.success('Automation loaded from database');
     } catch (error) {
       toast.error(error.message || 'Automation load failed');
+    }
+  };
+
+  const deleteRule = async (rule) => {
+    if (!rule?._id) return;
+    const label = rule.title || rule.keyword || 'this automation';
+    if (!window.confirm(`Delete automation "${label}" from database?`)) return;
+
+    try {
+      await chatbotAPI.deleteRule(rule._id);
+      setRules((current) => current.filter((item) => item._id !== rule._id));
+      if (selectedRuleId === rule._id) {
+        setSelectedRuleId(null);
+        setSelectedRuleKeyword('');
+      }
+      toast.success('Automation deleted');
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Automation delete failed');
     }
   };
 
@@ -1202,13 +1232,18 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
               <div className="chatbot-rule-empty">Loading saved automations...</div>
             ) : filteredRules.length ? (
               filteredRules.slice(0, 6).map((rule) => (
-                <button key={rule._id} type="button" className={`chatbot-rule-item ${selectedRuleId === rule._id ? 'active' : ''}`} onClick={() => loadRule(rule)}>
-                  <span>
-                    <b>{rule.title || rule.keyword}</b>
-                    <small>{rule.keyword} | {rule.ruleType} | {(rule.flow?.steps || []).length || 1} step(s)</small>
-                  </span>
-                  <i>{rule.isActive ? 'Active' : 'Off'}</i>
-                </button>
+                <div key={rule._id} className={`chatbot-rule-item ${selectedRuleId === rule._id ? 'active' : ''}`}>
+                  <button type="button" className="chatbot-rule-load" onClick={() => loadRule(rule)}>
+                    <span>
+                      <b>{rule.title || rule.keyword}</b>
+                      <small>{rule.keyword} | {rule.ruleType} | {(rule.flow?.steps || []).length || 1} step(s)</small>
+                    </span>
+                    <i>{rule.isActive ? 'Active' : 'Off'}</i>
+                  </button>
+                  <button type="button" className="chatbot-rule-delete" onClick={() => deleteRule(rule)} title="Delete automation">
+                    <TrashIcon />
+                  </button>
+                </div>
               ))
             ) : (
               <div className="chatbot-rule-empty">{ruleSearch ? 'No matching automation found.' : 'No saved automations yet. Save this flow to database.'}</div>
@@ -1343,12 +1378,16 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
         .chatbot-rule-search input { width:100%; min-height:42px; border:1px solid #dbe4ef; border-radius:14px; background:#fff; padding:0 12px 0 40px; color:#0f172a; outline:none; font:inherit; font-size:13px; box-sizing:border-box; }
         .chatbot-rule-search input:focus { border-color:#25D366; box-shadow:0 0 0 3px rgba(37,211,102,.13); }
         .chatbot-rule-list { grid-column:1 / -1; display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-        .chatbot-rule-item { border:1px solid #dbe4ef; border-radius:16px; background:linear-gradient(180deg,#fff,#f8fafc); padding:12px; display:flex; justify-content:space-between; gap:10px; text-align:left; cursor:pointer; transition:all .18s ease; }
+        .chatbot-rule-item { border:1px solid #dbe4ef; border-radius:16px; background:linear-gradient(180deg,#fff,#f8fafc); padding:10px; display:flex; align-items:stretch; justify-content:space-between; gap:8px; text-align:left; transition:all .18s ease; }
         .chatbot-rule-item:hover { transform:translateY(-1px); border-color:#25D366; box-shadow:0 14px 28px rgba(7,94,84,.09); }
         .chatbot-rule-item.active { border-color:#25D366; background:#ecfdf5; }
+        .chatbot-rule-load { flex:1; min-width:0; border:0; background:transparent; padding:2px; display:flex; justify-content:space-between; gap:10px; text-align:left; cursor:pointer; }
         .chatbot-rule-item b { display:block; color:#0f172a; font-size:13px; }
         .chatbot-rule-item small { display:block; margin-top:4px; color:#64748b; font-size:11px; word-break:break-word; }
         .chatbot-rule-item i { flex:0 0 auto; height:max-content; border-radius:999px; background:#ecfdf5; color:#047857; padding:5px 8px; font-size:10px; font-style:normal; font-weight:950; }
+        .chatbot-rule-delete { width:34px; min-width:34px; border:1px solid #fecaca; border-radius:12px; background:#fff1f2; color:#b91c1c; display:grid; place-items:center; cursor:pointer; transition:all .16s ease; }
+        .chatbot-rule-delete:hover { background:#ffe4e6; transform:translateY(-1px); }
+        .chatbot-rule-delete svg { width:16px; height:16px; }
         .chatbot-rule-empty { grid-column:1 / -1; border:1px dashed #cbd5e1; border-radius:16px; padding:14px; background:#f8fafc; color:#64748b; font-size:12px; font-weight:850; text-align:center; }
         .chatbot-workspace { display: grid; gap: 0; align-items: start; overflow: hidden; }
         .chatbot-builder, .chatbot-preview { height: calc(100vh - 190px); min-height: 780px; max-height: 860px; border: 1px solid rgba(226,232,240,.9); background: rgba(255,255,255,.88); box-shadow: 0 18px 42px rgba(7,94,84,.08); backdrop-filter: blur(16px); }
@@ -1379,6 +1418,9 @@ export default function FlowBuilder({ initialFlow, onChange, readOnly = false })
         .chatbot-panel input, .chatbot-panel textarea, .chatbot-panel select { display: block; width: 100%; margin-top: 5px; border: 1px solid #dbe4ef; border-radius: 12px; background: #fff; color: #0f172a; padding: 10px 11px; font: inherit; font-size: 12px; outline: none; box-sizing: border-box; transition: border-color .16s ease, box-shadow .16s ease; }
         .chatbot-panel input:focus, .chatbot-panel textarea:focus, .chatbot-panel select:focus { border-color: #25D366; box-shadow: 0 0 0 3px rgba(37,211,102,.14); }
         .chatbot-panel textarea { min-height: 104px; resize: vertical; line-height: 1.5; }
+        .chatbot-checkline { display:flex !important; align-items:center; gap:10px; border:1px solid #dbe4ef; border-radius:13px; background:#f8fafc; padding:10px 11px; color:#0f172a !important; font-size:12px !important; font-weight:900 !important; }
+        .chatbot-checkline input { width:16px !important; height:16px; margin:0 !important; padding:0 !important; accent-color:#25D366; }
+        .chatbot-checkline span { flex:1; }
         .chatbot-type-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 6px; margin-bottom: 12px; }
         .chatbot-type-row button { border: 1px solid #dbe4ef; background: #fff; border-radius: 11px; padding: 8px 4px; color: #64748b; font-size: 10px; font-weight: 900; cursor: pointer; }
         .chatbot-type-row button.active { border-color: #25D366; background: #ecfdf5; color: #047857; }
