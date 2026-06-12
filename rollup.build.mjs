@@ -30,6 +30,7 @@ const sucraseJsxPlugin = {
     if (!/\.(jsx|js)$/.test(id) || id.includes('node_modules')) return null;
 
     const browserEnv = {
+      VITE_API_URL: process.env.VITE_API_URL || '',
       VITE_AUTH_OTP_REQUIRED: process.env.VITE_AUTH_OTP_REQUIRED || 'false'
     };
 
