@@ -98,8 +98,14 @@ await bundle.write({
 await bundle.close();
 
 const htmlPath = path.join(distDir, 'index.html');
-let html = await readFile(htmlPath, 'utf8');
+let html;
+try {
+  html = await readFile(htmlPath, 'utf8');
+} catch (error) {
+  html = await readFile(path.join(root, 'index.html'), 'utf8');
+}
 html = html.replace(/<script type="module" crossorigin src="\/assets\/[^"]+"><\/script>/, '<script type="module" crossorigin src="/assets/index-manual.js"></script>');
+html = html.replace(/<script type="module" src="\/src\/main\.jsx"><\/script>/, '<script type="module" crossorigin src="/assets/index-manual.js"></script>');
 html = html.replace(/\s*<link rel="stylesheet" crossorigin href="\/assets\/[^"]+\.css">/g, '');
 html = html.replace('</head>', '    <link rel="stylesheet" crossorigin href="/assets/index-manual.css">\n  </head>');
 await writeFile(htmlPath, html);
