@@ -167,6 +167,32 @@ const findSchoolForPayload = async (payload = {}) => {
     return { school, normalized };
   }
 
+  const envPhoneNumberMatches = normalized.phoneNumberId
+    && process.env.META_PHONE_NUMBER_ID
+    && normalized.phoneNumberId === process.env.META_PHONE_NUMBER_ID;
+  const envWabaMatches = normalized.wabaId
+    && process.env.META_WABA_ID
+    && normalized.wabaId === process.env.META_WABA_ID;
+
+  if (envPhoneNumberMatches || envWabaMatches) {
+    const school = await School.findOne({
+      $or: [
+        { 'whatsapp.phoneNumberId': process.env.META_PHONE_NUMBER_ID },
+        { 'whatsapp.wabaId': process.env.META_WABA_ID },
+        { name: process.env.ADMIN_SCHOOL_NAME || 'Bkgis' }
+      ]
+    }).sort({ updatedAt: -1 });
+
+    if (school) {
+      webhookLog('env meta account selected', {
+        schoolId: school._id.toString(),
+        phoneNumberId: normalized.phoneNumberId,
+        wabaId: normalized.wabaId
+      });
+      return { school, normalized };
+    }
+  }
+
   return { school: null, normalized };
 };
 
