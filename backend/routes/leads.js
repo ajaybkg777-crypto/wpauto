@@ -6,6 +6,7 @@ const {
   createLead, 
   updateLead, 
   deleteLead,
+  bulkDeleteLeads,
   addConversation,
   importLeads,
   exportLeads,
@@ -21,6 +22,7 @@ router.use(checkSubscription('basic'));
 router.get('/export', asyncHandler(exportLeads));
 router.get('/stats', asyncHandler(getLeadStats));
 router.post('/import', asyncHandler(importLeads));
+router.delete('/bulk', asyncHandler(bulkDeleteLeads));
 router.get('/', asyncHandler(getLeads));
 router.get('/:id', asyncHandler(getLead));
 router.post('/', asyncHandler(createLead));

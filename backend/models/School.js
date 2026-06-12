@@ -26,6 +26,18 @@ const schoolSchema = new mongoose.Schema({
       default: true
     }
   },
+  admissionAutomation: {
+    processText: String,
+    documentsText: String,
+    feeStructureText: String,
+    brochurePdfUrl: String,
+    brochureFilename: {
+      type: String,
+      default: 'Admission-Brochure.pdf'
+    },
+    schoolPhotoUrls: [String],
+    campusVideoUrl: String
+  },
   address: {
     street: String,
     city: String,
@@ -116,7 +128,7 @@ const schoolSchema = new mongoose.Schema({
   limits: {
     maxLeads: {
       type: Number,
-      default: 100
+      default: 0
     },
     maxMessagesPerDay: {
       type: Number,

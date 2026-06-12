@@ -36,9 +36,13 @@ export default function Leads() {
   const [showModal, setShowModal] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', status: 'new', tags: '', notes: '' });
+  const [importReport, setImportReport] = useState(null);
 
   useEffect(() => {
-    fetchLeads();
+    const timer = window.setTimeout(() => {
+      fetchLeads();
+    }, filters.search ? 250 : 0);
+    return () => window.clearTimeout(timer);
   }, [pagination.page, filters.status, filters.source, filters.tag, filters.search]);
 
   useEffect(() => {
@@ -58,8 +62,17 @@ export default function Leads() {
       };
       const response = await leadAPI.getLeads(params);
       setLeads(response.data.data || []);
-      setPagination({ ...response.data });
-      setSearchParams(Object.fromEntries(Object.entries(filters).filter(([, value]) => value)));
+      setPagination({
+        page: response.data.page || 1,
+        pages: response.data.pages || 1,
+        total: response.data.total || 0
+      });
+      const cleanParams = Object.fromEntries(
+        Object.entries(filters)
+          .map(([key, value]) => [key, String(value || '').trim()])
+          .filter(([, value]) => value)
+      );
+      setSearchParams(cleanParams);
     } catch (error) {
       toast.error('Failed to fetch leads');
     } finally {
@@ -80,8 +93,8 @@ export default function Leads() {
   };
 
   const handleFilterChange = (key, value) => {
-    setFilters({ ...filters, [key]: value });
-    setPagination({ ...pagination, page: 1 });
+    setFilters((current) => ({ ...current, [key]: value }));
+    setPagination((current) => ({ ...current, page: 1 }));
   };
 
   const handleSearch = (e) => {
@@ -117,29 +130,46 @@ export default function Leads() {
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
-        const rows = String(event.target.result)
-          .split(/\r?\n/)
-          .map((row) => row.trim())
-          .filter(Boolean);
+        const rows = parseCsv(String(event.target.result));
+        if (rows.length < 2) {
+          toast.error('CSV file has no contacts');
+          return;
+        }
 
-        const headers = rows[0].split(',').map((header) => header.trim().toLowerCase());
-        const leads = rows.slice(1).map((row) => {
-          const values = row.split(',').map((value) => value.trim());
+        const headers = rows[0].map((header) => normalizeCsvHeader(header));
+        const leads = rows.slice(1).map((values) => {
           const record = headers.reduce((acc, header, index) => {
-            acc[header] = values[index] || '';
+            acc[header] = String(values[index] || '').trim();
             return acc;
           }, {});
 
           return {
-            name: record.name,
-            phone: record.phone,
-            email: record.email,
+            name: record.name || record.full_name || record.fullname || record.contact_name,
+            phone: record.phone || record.mobile || record.mobile_number || record.whatsapp || record.whatsapp_number || record.number,
+            email: record.email || record.email_id,
             tag: record.tag || record.tags
           };
-        }).filter((lead) => lead.name && lead.phone);
+        }).filter((lead) => lead.phone);
 
-        await leadAPI.importLeads({ leads });
-        toast.success(`${leads.length} contacts imported`);
+        if (!leads.length) {
+          toast.error('No phone numbers found in CSV');
+          return;
+        }
+
+        const result = await importContactsInChunks(leads);
+        setImportReport({
+          attempted: leads.length,
+          imported: result.imported || 0,
+          newContacts: result.newContacts || 0,
+          duplicates: result.duplicates || 0,
+          skipped: result.skipped || 0,
+          errors: result.errors || 0,
+          details: result.details || []
+        });
+        const skippedText = result.skipped || result.duplicates || result.errors
+          ? ` (${result.skipped || 0} skipped, ${result.duplicates || 0} duplicates, ${result.errors || 0} errors)`
+          : '';
+        toast.success(`${result.imported || leads.length} contacts imported${skippedText}`);
         fetchLeads();
       } catch (error) {
         toast.error(error.response?.data?.message || 'Failed to import CSV');
@@ -196,6 +226,34 @@ export default function Leads() {
       fetchLeads();
     } catch (error) {
       toast.error('Failed to delete lead');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!selectedFilterCount) {
+      toast.error('Apply at least one filter before bulk delete');
+      return;
+    }
+
+    const matched = pagination.total || leads.length;
+    const filterText = Object.entries(filters)
+      .filter(([, value]) => value)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(', ');
+
+    if (!confirm(`Delete ${matched} filtered contact(s) from database?\n\nFilters: ${filterText}\n\nThis cannot be undone.`)) return;
+
+    try {
+      const response = await leadAPI.bulkDeleteLeads({
+        ...filters,
+        confirm: true
+      });
+      const deleted = response.data?.data?.deleted || 0;
+      toast.success(`${deleted} contact(s) deleted from DB`);
+      setPagination((current) => ({ ...current, page: 1 }));
+      fetchLeads();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to bulk delete contacts');
     }
   };
 
@@ -312,6 +370,27 @@ export default function Leads() {
         <SummaryCard label="Active Filters" value={selectedFilterCount} icon={FunnelIcon} tone="bg-amber-50 text-amber-700 ring-amber-100" />
       </div>
 
+      {importReport && (
+        <div className="rounded-3xl border border-blue-100 bg-blue-50/70 p-5 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-base font-bold text-blue-950">Last Import Report</h2>
+              <p className="mt-1 text-sm text-blue-800">
+                Attempted {importReport.attempted} rows. Imported {importReport.imported}, new {importReport.newContacts}, duplicates {importReport.duplicates}, skipped {importReport.skipped}, errors {importReport.errors}.
+              </p>
+              {importReport.details?.length > 0 && (
+                <p className="mt-2 text-xs font-semibold text-blue-700">
+                  First issue: row {importReport.details[0].row || '-'} | {importReport.details[0].phone || 'no phone'} | {importReport.details[0].error}
+                </p>
+              )}
+            </div>
+            <button type="button" onClick={() => setImportReport(null)} className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-blue-700 ring-1 ring-blue-100">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="card overflow-hidden">
         <div className="border-b border-slate-100 bg-gradient-to-r from-white to-slate-50 px-5 py-4">
@@ -335,25 +414,31 @@ export default function Leads() {
                   Clear filters
                 </button>
               )}
+              {selectedFilterCount > 0 && (
+                <button type="button" onClick={handleBulkDelete} className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-bold text-rose-700 transition hover:bg-rose-50">
+                  <TrashIcon className="h-3.5 w-3.5" />
+                  Delete filtered
+                </button>
+              )}
             </div>
           </div>
         </div>
         <div className="space-y-4 p-5">
-          <form onSubmit={handleSearch} className="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_180px_180px_220px_auto]">
-            <div className="relative">
+          <form onSubmit={handleSearch} className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(240px,1fr)_minmax(150px,180px)_minmax(150px,180px)_minmax(180px,220px)_max-content]">
+            <div className="relative min-w-0 md:col-span-2 xl:col-span-1">
               <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search name, phone, email, message..."
+                placeholder="Search name, phone, email, tag..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange('search', e.target.value)}
-                className="input-field pl-10"
+                className="input-field min-w-0 pl-10"
               />
             </div>
             <select
               value={filters.status}
               onChange={(e) => handleFilterChange('status', e.target.value)}
-              className="input-field"
+              className="input-field min-w-0"
             >
               <option value="">All Status</option>
               <option value="new">New</option>
@@ -366,7 +451,7 @@ export default function Leads() {
             <select
               value={filters.source}
               onChange={(e) => handleFilterChange('source', e.target.value)}
-              className="input-field"
+              className="input-field min-w-0"
             >
               <option value="">All Sources</option>
               <option value="website_form">Website Form</option>
@@ -379,9 +464,9 @@ export default function Leads() {
               placeholder="Tag: parent, admission"
               value={filters.tag}
               onChange={(e) => handleFilterChange('tag', e.target.value)}
-              className="input-field"
+              className="input-field min-w-0"
             />
-            <button type="submit" className="btn-primary rounded-2xl">
+            <button type="submit" className="btn-primary min-h-[50px] whitespace-nowrap rounded-2xl px-5">
               Search
             </button>
           </form>
@@ -425,9 +510,17 @@ export default function Leads() {
             <h2 className="text-lg font-bold text-gray-950">Contacts Database</h2>
             <p className="text-sm text-gray-600">{pagination.total || 0} contacts synced from DB</p>
           </div>
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-            <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-            {connected ? 'WhatsApp ready' : 'Meta setup needed'}
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedFilterCount > 0 && (
+              <button type="button" onClick={handleBulkDelete} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100">
+                <TrashIcon className="h-4 w-4" />
+                Delete {pagination.total || leads.length} filtered
+              </button>
+            )}
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+              <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+              {connected ? 'WhatsApp ready' : 'Meta setup needed'}
+            </div>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -652,4 +745,85 @@ function SummaryCard({ label, value, icon: Icon, tone }) {
 function formatQuality(value) {
   if (!value) return 'Not available';
   return String(value).replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function normalizeCsvHeader(value = '') {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/^\uFEFF/, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function parseCsv(text = '') {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+
+    if (char === ',' && !quoted) {
+      row.push(cell.trim());
+      cell = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !quoted) {
+      if (char === '\r' && next === '\n') index += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+async function importContactsInChunks(leads, chunkSize = 500) {
+  const report = {
+    imported: 0,
+    newContacts: 0,
+    duplicates: 0,
+    skipped: 0,
+    errors: 0,
+    details: []
+  };
+
+  for (let index = 0; index < leads.length; index += chunkSize) {
+    const chunk = leads.slice(index, index + chunkSize);
+    const response = await leadAPI.importLeads({ leads: chunk });
+    const data = response.data?.data || {};
+
+    report.imported += data.imported || 0;
+    report.newContacts += data.newContacts || 0;
+    report.duplicates += data.duplicates || 0;
+    report.skipped += data.skipped || 0;
+    report.errors += data.errors || 0;
+    if (Array.isArray(data.details)) {
+      report.details.push(...data.details.slice(0, 50));
+    }
+  }
+
+  return report;
 }

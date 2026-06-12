@@ -47,9 +47,12 @@ const broadcastSchema = new mongoose.Schema({
     },
     messageId: String,
     error: String,
+    errorCode: String,
+    errorDetails: String,
     sentAt: Date,
     deliveredAt: Date,
-    readAt: Date
+    readAt: Date,
+    failedAt: Date
   }],
   // Stats
   totalRecipients: {

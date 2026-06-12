@@ -177,6 +177,55 @@ class WhatsAppService {
     }
   }
 
+  async sendDocumentMessage(phone, documentUrl, filename = 'brochure.pdf', caption = '') {
+    const config = await this.getSchoolConfig();
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phone,
+      type: 'document',
+      document: {
+        link: documentUrl,
+        filename,
+        ...(caption ? { caption } : {})
+      }
+    };
+
+    try {
+      return await this.sendMetaPayload(payload, config);
+    } catch (error) {
+      console.error('Meta WhatsApp document send error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  async sendVideoMessage(phone, videoUrl, caption = '') {
+    const config = await this.getSchoolConfig();
+    const payload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: phone,
+      type: 'video',
+      video: {
+        link: videoUrl,
+        ...(caption ? { caption } : {})
+      }
+    };
+
+    try {
+      return await this.sendMetaPayload(payload, config);
+    } catch (error) {
+      console.error('Meta WhatsApp video send error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
   async sendTemplateMessage(phone, templateId, variables = {}) {
     const config = await this.getSchoolConfig();
     let bodyValues = [];

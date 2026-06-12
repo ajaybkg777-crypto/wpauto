@@ -12,6 +12,9 @@ const sanitizeFlow = (flow) => {
           ...option,
           addTags: (option.addTags || []).filter(Boolean)
         };
+        if (option.sendAdmissionInfo) {
+          nextOption.sendAdmissionInfo = true;
+        }
 
         if (!nextOption.setStatus) {
           delete nextOption.setStatus;
@@ -34,6 +37,9 @@ const sanitizeActions = (actions = {}) => {
 
   if (actions.setStatus) {
     nextActions.setStatus = actions.setStatus;
+  }
+  if (actions.sendAdmissionInfo) {
+    nextActions.sendAdmissionInfo = true;
   }
 
   return nextActions;
@@ -76,16 +82,27 @@ const PROFESSIONAL_STARTER_RULES = [
     ruleType: 'keyword',
     title: 'Main menu',
     response: [
-      'Hello {{1}}',
-      'Welcome. How can we help you today?',
-      'Reply: 1 Admission | 2 Fees | 3 Counselor | 4 Courses | 5 Jobs'
+      'Welcome to BKG International School',
+      '',
+      'How can we help you today?',
+      '1. Admission Inquiry',
+      '2. Fee Structure',
+      '3. School Facilities',
+      '4. Transport Services',
+      '5. Student Services',
+      '6. Book Campus Visit',
+      '7. Careers',
+      '8. Talk To Counselor'
     ].join('\n'),
     quickReplies: [
-      { label: 'Admission', value: 'admission' },
-      { label: 'Fees', value: 'fees' },
-      { label: 'Counselor', value: 'counselor' },
-      { label: 'Courses', value: 'courses' },
-      { label: 'Jobs', value: 'job' }
+      { label: 'Admission Inquiry', value: 'admission' },
+      { label: 'Fee Structure', value: 'fees' },
+      { label: 'Facilities', value: 'facilities' },
+      { label: 'Transport', value: 'transport' },
+      { label: 'Student Services', value: 'student services' },
+      { label: 'Book Visit', value: 'visit' },
+      { label: 'Careers', value: 'career' },
+      { label: 'Counselor', value: 'counselor' }
     ],
     matchType: 'exact',
     priority: 100
@@ -103,23 +120,32 @@ const PROFESSIONAL_STARTER_RULES = [
           question: 'Are you interested in admission?',
           options: [
             {
-              label: 'Yes',
-              value: 'yes',
-              response: 'Great. Admissions are open.\nApply here: {{2}}\nOur counselor will contact you shortly.',
+              label: 'Apply Now',
+              value: 'apply now',
+              response: 'Great. Please complete the admission form. Our counselor will contact you shortly.',
               addTags: ['Admission Interested'],
               setStatus: 'interested',
+              sendAdmissionInfo: true,
               endFlow: true
             },
             {
-              label: 'Fees',
+              label: 'Fee Structure',
               value: 'fees',
-              response: 'Sure. You can check fees here: {{2}}\nReply counselor for a callback.',
+              response: 'Sure. We will share class-wise fee information and counselor support.',
               addTags: ['Fees Requested'],
               setStatus: 'pending',
               endFlow: true
             },
             {
-              label: 'Counselor Call',
+              label: 'Book Campus Visit',
+              value: 'visit',
+              response: 'Please share your preferred visit date. Our admission office will confirm the slot.',
+              addTags: ['Campus Visit Requested'],
+              setStatus: 'follow_up',
+              endFlow: true
+            },
+            {
+              label: 'Talk To Counselor',
               value: 'call',
               response: 'Counselor request received.\nCall/WhatsApp: {{4}}',
               addTags: ['Counselor Requested'],
@@ -137,12 +163,25 @@ const PROFESSIONAL_STARTER_RULES = [
   {
     keyword: 'fees',
     ruleType: 'keyword',
-    title: 'Fees reply',
-    response: 'Courses & Fees\nClass 9-10 | 11-12 | Competitive\nFor latest fee details, click: {{2}}',
+    title: 'Fee structure',
+    response: [
+      'Fee Structure',
+      '',
+      'Please choose the fee category:',
+      '1. Admission Fee',
+      '2. Tuition Fee',
+      '3. Annual Fee',
+      '4. Transport Fee',
+      '5. Hostel Fee',
+      '',
+      'Payment methods: UPI, Credit Card, Debit Card, Net Banking, Cash'
+    ].join('\n'),
     quickReplies: [
+      { label: 'Admission Fee', value: 'admission fee' },
+      { label: 'Tuition Fee', value: 'tuition fee' },
+      { label: 'Transport Fee', value: 'transport fee' },
       { label: 'Admission', value: 'admission' },
-      { label: 'Counselor', value: 'counselor' },
-      { label: 'Courses', value: 'courses' }
+      { label: 'Counselor', value: 'counselor' }
     ],
     actions: {
       addTags: ['Fees Requested'],
@@ -154,12 +193,25 @@ const PROFESSIONAL_STARTER_RULES = [
   {
     keyword: 'counselor',
     ruleType: 'keyword',
-    title: 'Counselor callback reply',
-    response: 'Counselor request received.\nCall/WhatsApp: {{4}}\nApply Now: {{2}}',
+    title: 'Talk to counselor',
+    response: [
+      'Talk To Counselor',
+      '',
+      'Please choose the department:',
+      '1. Admission Office',
+      '2. Accounts',
+      '3. Principal Office',
+      '4. Transport Department',
+      '5. Academic Department',
+      '',
+      'Our team will contact you shortly. Contact: {{4}}'
+    ].join('\n'),
     quickReplies: [
-      { label: 'Admission', value: 'admission' },
-      { label: 'Fees', value: 'fees' },
-      { label: 'Courses', value: 'courses' }
+      { label: 'Admission Office', value: 'admission office' },
+      { label: 'Accounts', value: 'accounts' },
+      { label: 'Transport', value: 'transport' },
+      { label: 'Academic', value: 'academic department' },
+      { label: 'Book Visit', value: 'visit' }
     ],
     actions: {
       addTags: ['Counselor Requested'],
@@ -169,76 +221,132 @@ const PROFESSIONAL_STARTER_RULES = [
     priority: 85
   },
   {
-    keyword: 'courses',
+    keyword: 'facilities',
     ruleType: 'keyword',
-    title: 'Courses reply',
-    response: 'Available programs:\nClass 9-10 | 11-12 | Competitive Exams\nDetails: {{2}}',
+    title: 'School facilities',
+    response: [
+      'School Facilities',
+      '',
+      'Smart Classes - Digital learning environment',
+      'Computer Lab - Modern computer education',
+      'Science Lab - Practical science learning',
+      'Library - Knowledge resource center',
+      'Sports - Indoor and outdoor activities',
+      'CCTV Security - Safe campus environment'
+    ].join('\n'),
     quickReplies: [
       { label: 'Admission', value: 'admission' },
       { label: 'Fees', value: 'fees' },
+      { label: 'Book Visit', value: 'visit' },
       { label: 'Counselor', value: 'counselor' }
     ],
     actions: {
-      addTags: ['Course Enquiry'],
+      addTags: ['Facility Enquiry'],
       setStatus: 'pending'
     },
     matchType: 'contains',
     priority: 80
   },
   {
-    keyword: 'job',
+    keyword: 'transport',
+    ruleType: 'keyword',
+    title: 'Transport services',
+    response: [
+      'Transport Services',
+      '',
+      'Please share your area name to check route availability.',
+      'Our team will confirm bus route, pickup point, and transport fee.'
+    ].join('\n'),
+    quickReplies: [
+      { label: 'Check Route', value: 'check route' },
+      { label: 'Transport Fee', value: 'transport fee' },
+      { label: 'Counselor', value: 'counselor' }
+    ],
+    actions: {
+      addTags: ['Transport Enquiry'],
+      setStatus: 'pending'
+    },
+    matchType: 'contains',
+    priority: 79
+  },
+  {
+    keyword: 'student services',
+    ruleType: 'keyword',
+    title: 'Student services',
+    response: [
+      'Student Services',
+      '',
+      '1. Attendance',
+      '2. Homework',
+      '3. Timetable',
+      '4. Result',
+      '5. Fee Status',
+      '6. Certificate Request',
+      '7. Leave Application',
+      '8. Complaint'
+    ].join('\n'),
+    quickReplies: [
+      { label: 'Attendance', value: 'attendance' },
+      { label: 'Homework', value: 'homework' },
+      { label: 'Timetable', value: 'timetable' },
+      { label: 'Result', value: 'result' },
+      { label: 'Fee Status', value: 'fee status' },
+      { label: 'Complaint', value: 'complaint' }
+    ],
+    actions: {
+      addTags: ['Student Services'],
+      setStatus: 'pending'
+    },
+    matchType: 'contains',
+    priority: 78
+  },
+  {
+    keyword: 'visit',
+    ruleType: 'keyword',
+    title: 'Book campus visit',
+    response: [
+      'Book Campus Visit',
+      '',
+      'Please share:',
+      'Parent Name',
+      'Student Name',
+      'Mobile Number',
+      'Preferred Date',
+      'Preferred Time',
+      '',
+      'Our admission office will confirm your visit slot.'
+    ].join('\n'),
+    quickReplies: [
+      { label: 'Admission', value: 'admission' },
+      { label: 'Facilities', value: 'facilities' },
+      { label: 'Counselor', value: 'counselor' }
+    ],
+    actions: {
+      addTags: ['Campus Visit Requested'],
+      setStatus: 'follow_up'
+    },
+    matchType: 'contains',
+    priority: 77
+  },
+  {
+    keyword: 'career',
     ruleType: 'flow',
-    title: 'Teacher job flow',
+    title: 'Career enquiry flow',
     response: 'Job flow started',
     flow: {
       startStepId: 'job_interest',
       steps: [
         {
           id: 'job_interest',
-          question: 'Are you interested in teaching job opportunities?',
+          question: 'Which position are you interested in?',
           options: [
-            {
-              label: 'Yes',
-              value: 'yes',
-              response: 'Great. Please choose your subject.',
-              nextStepId: 'job_subject',
-              endFlow: false,
-              addTags: ['Job Interested'],
-              setStatus: 'interested'
-            },
-            {
-              label: 'No',
-              value: 'no',
-              response: 'No problem. You can contact us anytime: {{4}}',
-              endFlow: true,
-              addTags: ['Job Not Interested'],
-              setStatus: 'not_interested'
-            }
+            { label: 'PRT', value: 'prt', response: 'Please share your name, qualification, experience, resume, and expected salary.', addTags: ['Career PRT'], setStatus: 'follow_up', endFlow: true },
+            { label: 'TGT', value: 'tgt', response: 'Please share your name, qualification, experience, resume, and expected salary.', addTags: ['Career TGT'], setStatus: 'follow_up', endFlow: true },
+            { label: 'PGT', value: 'pgt', response: 'Please share your name, qualification, experience, resume, and expected salary.', addTags: ['Career PGT'], setStatus: 'follow_up', endFlow: true },
+            { label: 'Computer Teacher', value: 'computer teacher', response: 'Please share your name, qualification, experience, resume, and expected salary.', addTags: ['Career Computer Teacher'], setStatus: 'follow_up', endFlow: true },
+            { label: 'Admin Staff', value: 'admin staff', response: 'Please share your name, qualification, experience, resume, and expected salary.', addTags: ['Career Admin Staff'], setStatus: 'follow_up', endFlow: true }
           ],
-          fallbackResponse: 'Please reply 1 for Yes or 2 for No.'
-        },
-        {
-          id: 'job_subject',
-          question: 'Which subject do you teach?',
-          options: [
-            {
-              label: 'Maths',
-              value: 'maths',
-              response: 'Thanks. Please apply here: {{3}}\nContact: {{4}}',
-              addTags: ['Subject Maths'],
-              setStatus: 'follow_up',
-              endFlow: true
-            },
-            {
-              label: 'Science',
-              value: 'science',
-              response: 'Thanks. Please apply here: {{3}}\nContact: {{4}}',
-              addTags: ['Subject Science'],
-              setStatus: 'follow_up',
-              endFlow: true
-            }
-          ],
-          fallbackResponse: 'Please reply with a subject option.'
+          fallbackResponse: 'Please choose a position from the list.'
         }
       ]
     },
@@ -253,13 +361,79 @@ const PROFESSIONAL_STARTER_RULES = [
     isFallback: true,
     fallbackMessage: [
       'Sorry, please choose from options:',
-      '1 Admission',
-      '2 Fees',
-      '3 Counselor',
-      '4 Courses',
-      '5 Jobs'
+      '1 Admission Inquiry',
+      '2 Fee Structure',
+      '3 School Facilities',
+      '4 Transport Services',
+      '5 Student Services',
+      '6 Book Campus Visit',
+      '7 Careers',
+      '8 Talk To Counselor'
     ].join('\n'),
     priority: 0
+  },
+  {
+    keyword: 'attendance',
+    ruleType: 'keyword',
+    title: 'Attendance lookup',
+    response: 'Attendance\nPlease share the admission number. We will reply with present days, absent days, and attendance percentage.',
+    actions: { addTags: ['Attendance Request'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 70
+  },
+  {
+    keyword: 'homework',
+    ruleType: 'keyword',
+    title: 'Homework lookup',
+    response: 'Homework\nPlease share class and section to receive the latest homework.',
+    actions: { addTags: ['Homework Request'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 69
+  },
+  {
+    keyword: 'timetable',
+    ruleType: 'keyword',
+    title: 'Timetable lookup',
+    response: 'Timetable\nPlease share class. We will send the class timetable PDF if available.',
+    actions: { addTags: ['Timetable Request'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 68
+  },
+  {
+    keyword: 'result',
+    ruleType: 'keyword',
+    title: 'Result lookup',
+    response: 'Result\nPlease share admission number. We will reply with marks, percentage, grade, and rank if available.',
+    actions: { addTags: ['Result Request'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 67
+  },
+  {
+    keyword: 'certificate',
+    ruleType: 'keyword',
+    title: 'Certificate request',
+    response: 'Certificate Request\nChoose: Bonafide Certificate, Transfer Certificate, Character Certificate, Study Certificate, or Migration Certificate.',
+    actions: { addTags: ['Certificate Request'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 66
+  },
+  {
+    keyword: 'leave',
+    ruleType: 'keyword',
+    title: 'Leave application',
+    response: 'Leave Application\nPlease share student name, class, reason, start date, and end date.',
+    actions: { addTags: ['Leave Application'], setStatus: 'pending' },
+    matchType: 'contains',
+    priority: 65
+  },
+  {
+    keyword: 'complaint',
+    ruleType: 'keyword',
+    title: 'Complaint support',
+    response: 'Complaint\nChoose category: Academic, Transport, Fee, Teacher, Technical, or Other. Please also write your issue.',
+    actions: { addTags: ['Complaint'], setStatus: 'follow_up' },
+    matchType: 'contains',
+    priority: 64
   },
   {
     keyword: 'followup',
@@ -333,17 +507,22 @@ const getIntentText = (message = '') => {
   const shortcuts = {
     '1': 'admission',
     '2': 'fees',
-    '3': 'counselor',
-    '4': 'courses',
-    '5': 'job'
+    '3': 'facilities',
+    '4': 'transport',
+    '5': 'student services',
+    '6': 'visit',
+    '7': 'career',
+    '8': 'counselor'
   };
 
   if (shortcuts[compact]) return shortcuts[compact];
   if (['hello', 'hey', 'hii', 'menu', 'start', 'namaste'].some((word) => isCloseMatch(compact, word))) return 'hi';
   if (['admission', 'admissions', 'addmission', 'admis', 'apply', 'dakhila', 'enquiry', 'inquiry', 'interested', 'intrested'].some((word) => isCloseMatch(compact, word))) return 'admission';
   if (['fee', 'fees', 'school fee', 'school fees', 'feez', 'price', 'pricing', 'cost', 'rate', 'package', 'charges', 'paisa', 'batao'].some((word) => isCloseMatch(compact, word))) return 'fees';
-  if (['course', 'courses', 'class', 'classes', 'program', 'programs', 'batch', 'batches'].some((word) => isCloseMatch(compact, word))) return 'courses';
-  if (['job', 'jobs', 'career', 'vacancy', 'teacher', 'hr'].some((word) => isCloseMatch(compact, word))) return 'job';
+  if (['facility', 'facilities', 'smart class', 'computer lab', 'science lab', 'library', 'sports', 'cctv'].some((word) => isCloseMatch(compact, word))) return 'facilities';
+  if (['student service', 'student services', 'attendance', 'homework', 'timetable', 'result', 'certificate', 'leave', 'complaint'].some((word) => isCloseMatch(compact, word))) return compact;
+  if (['course', 'courses', 'class', 'classes', 'program', 'programs', 'batch', 'batches'].some((word) => isCloseMatch(compact, word))) return 'admission';
+  if (['job', 'jobs', 'career', 'careers', 'vacancy', 'teacher', 'hr', 'prt', 'tgt', 'pgt'].some((word) => isCloseMatch(compact, word))) return 'career';
   if (['counsellor', 'counselor', 'counselling', 'counseling', 'call', 'callback', 'call back', 'contact', 'phone', 'help', 'baat', 'talk'].some((word) => isCloseMatch(compact, word))) return 'counselor';
   if (['visit', 'school visit', 'tour', 'campus', 'book visit', 'appointment', 'meeting', 'milna'].some((word) => isCloseMatch(compact, word))) return 'visit';
   if (['hostel', 'hostal', 'boarding'].some((word) => isCloseMatch(compact, word))) return 'hostel';
@@ -660,7 +839,7 @@ exports.getAnalytics = async (req, res) => {
 exports.createStarterKit = async (req, res) => {
   try {
     const created = [];
-    const skipped = [];
+    const updated = [];
 
     for (const starterRule of PROFESSIONAL_STARTER_RULES) {
       const query = starterRule.isFallback
@@ -669,7 +848,14 @@ exports.createStarterKit = async (req, res) => {
       const existingRule = await ChatbotRule.findOne(query);
 
       if (existingRule) {
-        skipped.push(existingRule);
+        Object.assign(existingRule, {
+          responseType: 'text',
+          ...starterRule,
+          triggerCount: existingRule.triggerCount,
+          lastTriggered: existingRule.lastTriggered
+        });
+        await existingRule.save();
+        updated.push(existingRule);
         continue;
       }
 
@@ -684,7 +870,7 @@ exports.createStarterKit = async (req, res) => {
     res.status(201).json({
       success: true,
       created: created.length,
-      skipped: skipped.length,
+      updated: updated.length,
       data: created
     });
   } catch (error) {

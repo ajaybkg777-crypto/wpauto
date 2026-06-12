@@ -7,6 +7,8 @@ import {
   ChartBarIcon,
   CheckCircleIcon,
   ClockIcon,
+  ArrowDownTrayIcon,
+  EyeIcon,
   ExclamationTriangleIcon,
   MagnifyingGlassIcon,
   MegaphoneIcon,
@@ -15,7 +17,8 @@ import {
   PlusIcon,
   ShieldCheckIcon,
   TrashIcon,
-  UsersIcon
+  UsersIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 export default function Broadcast() {
@@ -25,6 +28,8 @@ export default function Broadcast() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  const [selectedBroadcast, setSelectedBroadcast] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const fetchRef = useRef(false);
 
@@ -93,6 +98,29 @@ export default function Broadcast() {
       fetchBroadcasts();
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to delete broadcast');
+    }
+  };
+
+  const handleResume = async (broadcast) => {
+    try {
+      const response = await broadcastAPI.resumeBroadcast(broadcast._id);
+      toast.success(response.data.message || 'Broadcast resumed');
+      fetchBroadcasts();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to resume broadcast');
+    }
+  };
+
+  const handleOpenDetails = async (broadcast) => {
+    setSelectedBroadcast(broadcast);
+    setLoadingDetails(true);
+    try {
+      const response = await broadcastAPI.getBroadcast(broadcast._id);
+      setSelectedBroadcast(response.data.data);
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Could not load recipient report');
+    } finally {
+      setLoadingDetails(false);
     }
   };
 
@@ -346,10 +374,28 @@ export default function Broadcast() {
                           </button>
                         )}
                         {broadcast.status === 'processing' && (
-                          <div className="rounded-lg p-2">
-                            <ArrowPathIcon className="h-5 w-5 animate-spin text-primary" />
-                          </div>
+                          <>
+                            <div className="rounded-lg p-2">
+                              <ArrowPathIcon className="h-5 w-5 animate-spin text-primary" />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleResume(broadcast)}
+                              className="rounded-lg p-2 text-green-700 hover:bg-green-50"
+                              title="Resume pending recipients"
+                            >
+                              <PlayIcon className="h-5 w-5" />
+                            </button>
+                          </>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDetails(broadcast)}
+                          className="rounded-lg p-2 text-blue-700 hover:bg-blue-50"
+                          title="View recipient report"
+                        >
+                          <EyeIcon className="h-5 w-5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleDelete(broadcast._id)}
@@ -390,8 +436,183 @@ export default function Broadcast() {
           </div>
         )}
       </div>
+      {selectedBroadcast && (
+        <RecipientReport
+          broadcast={selectedBroadcast}
+          loading={loadingDetails}
+          onClose={() => setSelectedBroadcast(null)}
+        />
+      )}
     </div>
   );
+}
+
+function RecipientReport({ broadcast, loading, onClose }) {
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [query, setQuery] = useState('');
+  const recipients = broadcast.recipients || [];
+  const filtered = recipients.filter((recipient) => {
+    const matchesStatus = statusFilter === 'all' || recipient.status === statusFilter;
+    const normalizedQuery = query.trim().toLowerCase();
+    const matchesQuery = !normalizedQuery || [recipient.name, recipient.phone, recipient.error, recipient.errorDetails]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(normalizedQuery));
+    return matchesStatus && matchesQuery;
+  });
+  const counts = recipients.reduce((result, recipient) => {
+    result[recipient.status || 'pending'] = (result[recipient.status || 'pending'] || 0) + 1;
+    return result;
+  }, {});
+  const exportRecipients = (status) => {
+    const rows = status === 'all'
+      ? recipients
+      : recipients.filter((recipient) => recipient.status === status);
+    if (!rows.length) {
+      toast.error(`No ${status === 'all' ? '' : `${status} `}recipients available to download`);
+      return;
+    }
+
+    const columns = [
+      ['Name', (recipient) => recipient.name || ''],
+      ['Phone', (recipient) => recipient.phone || ''],
+      ['Status', (recipient) => recipient.status || 'pending'],
+      ['Sent At', (recipient) => formatCsvDate(recipient.sentAt)],
+      ['Delivered At', (recipient) => formatCsvDate(recipient.deliveredAt)],
+      ['Read At', (recipient) => formatCsvDate(recipient.readAt)],
+      ['Failed At', (recipient) => formatCsvDate(recipient.failedAt)],
+      ['Meta Message ID', (recipient) => recipient.messageId || ''],
+      ['Error Code', (recipient) => recipient.errorCode || ''],
+      ['Failure Reason', (recipient) => recipient.error || ''],
+      ['Error Details', (recipient) => recipient.errorDetails || '']
+    ];
+    const csv = [
+      columns.map(([heading]) => csvCell(heading)).join(','),
+      ...rows.map((recipient) => columns.map(([, read]) => csvCell(read(recipient))).join(','))
+    ].join('\r\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${toFilename(broadcast.name)}-${status}-recipients.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/35 backdrop-blur-sm" onMouseDown={onClose}>
+      <section className="flex h-full w-full max-w-5xl flex-col bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="border-b border-slate-200 px-5 py-4 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-primary">Delivery Report</p>
+              <h2 className="mt-1 text-xl font-bold text-slate-950">{broadcast.name}</h2>
+              <p className="mt-1 text-sm text-slate-500">Recipient-level Meta delivery status and failure details.</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-xl p-2 text-slate-500 hover:bg-slate-100" title="Close report">
+              <XMarkIcon className="h-6 w-6" />
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <ReportStat label="Total" value={broadcast.totalRecipients || recipients.length} tone="slate" />
+            <ReportStat label="Sent" value={broadcast.sentCount || 0} tone="blue" />
+            <ReportStat label="Delivered" value={broadcast.deliveredCount || 0} tone="green" />
+            <ReportStat label="Read" value={broadcast.readCount || 0} tone="emerald" />
+            <ReportStat label="Failed" value={broadcast.failedCount || 0} tone="rose" />
+          </div>
+        </header>
+
+        <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <label className="relative block w-full sm:max-w-md">
+            <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, phone, or error..." className="h-11 w-full rounded-xl border border-slate-200 pl-10 pr-3 text-sm font-semibold outline-none focus:border-[#25D366] focus:ring-4 focus:ring-emerald-100" />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-[#25D366]">
+              <option value="all">All recipients ({recipients.length})</option>
+              {['pending', 'sent', 'delivered', 'read', 'failed'].map((status) => (
+                <option value={status} key={status}>{status.charAt(0).toUpperCase() + status.slice(1)} ({counts[status] || 0})</option>
+              ))}
+            </select>
+            <button type="button" onClick={() => exportRecipients(statusFilter)} className="inline-flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700">
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              Export Filter
+            </button>
+            <button type="button" onClick={() => exportRecipients('failed')} className="inline-flex h-11 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm font-bold text-rose-700 transition hover:bg-rose-100">
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              Failed CSV
+            </button>
+            <button type="button" onClick={() => exportRecipients('sent')} className="inline-flex h-11 items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-sm font-bold text-blue-700 transition hover:bg-blue-100">
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              Sent CSV
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto">
+          {loading ? (
+            <div className="flex h-56 items-center justify-center"><div className="h-9 w-9 animate-spin rounded-full border-4 border-primary border-t-transparent" /></div>
+          ) : filtered.length === 0 ? (
+            <p className="p-8 text-center text-sm font-semibold text-slate-500">No recipients match this filter.</p>
+          ) : (
+            <table className="w-full min-w-[880px]">
+              <thead className="sticky top-0 bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-6 py-3">Recipient</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Timeline</th>
+                  <th className="px-4 py-3">Meta Message ID</th>
+                  <th className="px-4 py-3">Failure Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.map((recipient) => (
+                  <tr key={recipient._id || `${recipient.phone}-${recipient.messageId || 'pending'}`} className="align-top hover:bg-slate-50">
+                    <td className="px-6 py-4"><p className="font-bold text-slate-950">{recipient.name || 'Unknown'}</p><p className="mt-1 text-xs font-semibold text-slate-500">{recipient.phone}</p></td>
+                    <td className="px-4 py-4"><RecipientStatusBadge status={recipient.status} /></td>
+                    <td className="px-4 py-4 text-xs font-medium leading-5 text-slate-600">{formatRecipientTimeline(recipient)}</td>
+                    <td className="max-w-[190px] break-all px-4 py-4 text-xs font-medium text-slate-500">{recipient.messageId || '-'}</td>
+                    <td className="max-w-[280px] px-4 py-4 text-xs leading-5 text-slate-600">{recipient.status === 'failed' ? <><b className="text-rose-700">{recipient.errorCode ? `#${recipient.errorCode} ` : ''}{recipient.error || 'Meta delivery failed'}</b>{recipient.errorDetails && <span className="mt-1 block">{recipient.errorDetails}</span>}</> : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReportStat({ label, value, tone }) {
+  const tones = { slate: 'bg-slate-50 text-slate-700', blue: 'bg-blue-50 text-blue-700', green: 'bg-green-50 text-green-700', emerald: 'bg-emerald-50 text-emerald-700', rose: 'bg-rose-50 text-rose-700' };
+  return <div className={`rounded-xl px-3 py-3 ${tones[tone]}`}><p className="text-xs font-bold uppercase">{label}</p><p className="mt-1 text-xl font-bold">{value}</p></div>;
+}
+
+function RecipientStatusBadge({ status = 'pending' }) {
+  const tones = { pending: 'bg-slate-100 text-slate-700', sent: 'bg-blue-100 text-blue-700', delivered: 'bg-green-100 text-green-700', read: 'bg-emerald-100 text-emerald-700', failed: 'bg-rose-100 text-rose-700' };
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold capitalize ${tones[status] || tones.pending}`}>{status}</span>;
+}
+
+function formatRecipientTimeline(recipient) {
+  const rows = [
+    ['Sent', recipient.sentAt],
+    ['Delivered', recipient.deliveredAt],
+    ['Read', recipient.readAt],
+    ['Failed', recipient.failedAt]
+  ].filter(([, value]) => value);
+  return rows.length ? rows.map(([label, value]) => <div key={label}><b>{label}:</b> {new Date(value).toLocaleString()}</div>) : '-';
+}
+
+function csvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function formatCsvDate(value) {
+  return value ? new Date(value).toLocaleString() : '';
+}
+
+function toFilename(value) {
+  return String(value || 'broadcast').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'broadcast';
 }
 
 function InfoTile({ label, value }) {

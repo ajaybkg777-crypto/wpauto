@@ -11,6 +11,7 @@ const {
   updateBroadcast, 
   deleteBroadcast,
   startBroadcast,
+  resumeBroadcast,
   getBroadcastStats
 } = require('../controllers/broadcastController');
 const { protect, attachSchoolId, checkSubscription } = require('../middleware/auth');
@@ -50,5 +51,6 @@ router.post('/', asyncHandler(createBroadcast));
 router.put('/:id', asyncHandler(updateBroadcast));
 router.delete('/:id', asyncHandler(deleteBroadcast));
 router.post('/:id/start', asyncHandler(startBroadcast));
+router.post('/:id/resume', asyncHandler(resumeBroadcast));
 
 module.exports = router;

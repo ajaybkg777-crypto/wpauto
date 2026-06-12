@@ -2,6 +2,8 @@ const Template = require('../models/Template');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
 const School = require('../models/School');
 const { decryptSecret } = require('../utils/tokenVault');
+const { uploadFileToCloudinary } = require('../services/cloudinaryService');
+const fs = require('fs');
 
 const getPublicAssetUrl = (assetPath) => {
   if (!assetPath) return '';
@@ -11,8 +13,39 @@ const getPublicAssetUrl = (assetPath) => {
   return `${process.env.APP_BASE_URL.replace(/\/$/, '')}${assetPath}`;
 };
 
+const getLocalUploadPath = (assetPath = '') => {
+  const value = String(assetPath || '');
+  const uploadsIndex = value.indexOf('/uploads/');
+  if (uploadsIndex === -1) return '';
+
+  return `${__dirname}/..${value.slice(uploadsIndex)}`;
+};
+
+const normalizeMetaMediaHandle = (value = '') => String(value || '').replace(/\s+/g, '').trim();
+
+const getCompatibleImageSampleFile = (schoolId) => {
+  const filename = `${schoolId}-meta-compatible-sample.png`;
+  const samplePath = `${__dirname}/../uploads/templates/${filename}`;
+
+  if (!fs.existsSync(samplePath)) {
+    const samplePngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAASwAAABkCAIAAAD2HxkiAAAAA3NCSVQICAjb4U/gAAAA+UlEQVR4nO3RAQ0AAAjDMO5fNCCDkC5z0DPwrQF4sQIsWAEWrAALVoAFK8CCFWDBCrBgBViwws+xAgxYARasAAtWgAUrwIIVYMEKsGAFWLACLFiB+y3AghVgwQqwYAVYsAIsWAEWrAALVoAFK8CCFbifAixYARasAAtWgAUrwIIVYMEKsGAFWLACLFiB+y3AghVgwQqwYAVYsAIsWAEWrAALVoAFK8CCFbifAixYARasAAtWgAUrwIIVYMEKsGAFWLACLFiB+y3AghVgwQqwYAVYsAIsWAEWrAALVoAFK8CCFbifAixY8QE2fwKNR8UdkwAAAABJRU5ErkJggg==';
+    fs.mkdirSync(`${__dirname}/../uploads/templates`, { recursive: true });
+    fs.writeFileSync(samplePath, Buffer.from(samplePngBase64, 'base64'));
+  }
+
+  return {
+    path: samplePath,
+    originalname: 'meta-compatible-sample.png',
+    size: fs.statSync(samplePath).size,
+    mimetype: 'image/png'
+  };
+};
+
 const isMetaMediaHandle = (value = '') => {
-  return /^[A-Za-z0-9_-]+::/.test(String(value)) || /^h:[A-Za-z0-9_-]+/i.test(String(value));
+  const handle = normalizeMetaMediaHandle(value);
+  return /^[A-Za-z0-9_-]+::/.test(handle)
+    || /^h:[A-Za-z0-9_:=./+-]+/i.test(handle)
+    || /^\d+:[A-Za-z0-9_:=./+-]+$/.test(handle);
 };
 
 const getMetaGraphBaseUrl = () => {
@@ -87,6 +120,8 @@ const sanitizeTemplatePayload = (payload = {}) => {
     ? {
         type: payload.media.type || headerType,
         url: getPublicAssetUrl(payload.media.url) || payload.media.url,
+        localUrl: payload.media.localUrl || (String(payload.media.url || '').includes('/uploads/') ? payload.media.url : ''),
+        handle: normalizeMetaMediaHandle(payload.media.handle),
         filename: payload.media.filename,
         mimetype: payload.media.mimetype
       }
@@ -144,8 +179,8 @@ const validateTemplateForMeta = (template, { submitting = false } = {}) => {
     if (template.media.type && template.media.type !== template.header.type) throw new Error('Uploaded media type must match the selected header type');
     const mediaUrl = getPublicAssetUrl(template.media.url);
     if (submitting && !mediaUrl) throw new Error('Set APP_BASE_URL and upload media again before submitting media templates to Meta');
-    if (submitting && !isMetaMediaHandle(template.media.url)) {
-      throw new Error('Meta image/video/document headers need a Meta media sample handle. Use None/Text header for now, or upload media through Meta media upload before submitting.');
+    if (submitting && !isMetaMediaHandle(template.media.handle)) {
+      throw new Error('Meta image/video/document headers need a Meta media sample handle. Upload/change the media sample again, then submit.');
     }
   }
 
@@ -174,7 +209,8 @@ const getTemplateMetaConfig = async (schoolId) => {
     WhatsAppAccount.findOne({ schoolId }).select('+accessToken')
   ]);
 
-  const wabaId = account?.wabaId || school?.whatsapp?.wabaId || process.env.META_WABA_ID;
+  const wabaId = process.env.META_WABA_ID || account?.wabaId || school?.whatsapp?.wabaId;
+  const appId = process.env.META_APP_ID || account?.appId;
   const envAccessToken = decryptSecret(process.env.META_SYSTEM_USER_ACCESS_TOKEN);
   const accountAccessToken = decryptSecret(account?.accessToken);
   const accessToken = envAccessToken || accountAccessToken;
@@ -187,7 +223,70 @@ const getTemplateMetaConfig = async (schoolId) => {
     throw new Error('Meta access token is missing');
   }
 
-  return { wabaId, accessToken };
+  return { wabaId, accessToken, appId };
+};
+
+const uploadMediaSampleToMeta = async (schoolId, file) => {
+  const { accessToken, appId } = await getTemplateMetaConfig(schoolId);
+
+  if (!appId) {
+    throw new Error('META_APP_ID is required to upload Meta media samples');
+  }
+
+  const fileBuffer = fs.readFileSync(file.path);
+  const uploadUrl = new URL(`${getMetaGraphBaseUrl()}/${appId}/uploads`);
+  uploadUrl.searchParams.set('file_name', file.originalname);
+  uploadUrl.searchParams.set('file_length', String(file.size));
+  uploadUrl.searchParams.set('file_type', file.mimetype);
+
+  const sessionResponse = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+  const sessionData = await sessionResponse.json();
+
+  if (!sessionResponse.ok || sessionData.error || !sessionData.id) {
+    throw new Error(sessionData.error?.message || 'Could not start Meta media upload');
+  }
+
+  const uploadResponse = await fetch(`${getMetaGraphBaseUrl()}/${sessionData.id}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `OAuth ${accessToken}`,
+      file_offset: '0',
+      'Content-Type': 'application/octet-stream'
+    },
+    body: fileBuffer
+  });
+  const uploadData = await uploadResponse.json();
+
+  if (!uploadResponse.ok || uploadData.error || !uploadData.h) {
+    throw new Error(uploadData.error?.message || 'Could not upload media sample to Meta');
+  }
+
+  return normalizeMetaMediaHandle(uploadData.h);
+};
+
+const ensureMetaMediaHandle = async (template, { force = false } = {}) => {
+  if (!['image', 'video', 'document'].includes(template.header?.type)) return;
+  if (!force && isMetaMediaHandle(template.media?.handle)) return;
+
+  const localPath = getLocalUploadPath(template.media?.localUrl) || getLocalUploadPath(template.media?.url);
+  if (!localPath || !fs.existsSync(localPath)) {
+    throw new Error('Meta media sample handle is missing. Upload/change the media sample again, then submit.');
+  }
+
+  const metaHandle = await uploadMediaSampleToMeta(template.schoolId, {
+    path: localPath,
+    originalname: template.media?.filename || `template-${template.header.type}`,
+    size: fs.statSync(localPath).size,
+    mimetype: template.media?.mimetype || `${template.header.type}/*`
+  });
+
+  template.media.handle = normalizeMetaMediaHandle(metaHandle);
+  await template.save();
 };
 
 const buildMetaTemplatePayload = (template) => {
@@ -201,16 +300,16 @@ const buildMetaTemplatePayload = (template) => {
     });
   } else if (['image', 'video', 'document'].includes(template.header?.type) || ['image', 'video', 'document'].includes(template.media?.type)) {
     const mediaType = template.header?.type || template.media?.type;
-    const mediaUrl = getPublicAssetUrl(template.media?.url);
-    if (!mediaUrl || !isMetaMediaHandle(template.media?.url)) {
-      throw new Error('Meta media header sample is missing. Switch Header to None/Text, or upload media through Meta first.');
+    const mediaHandle = normalizeMetaMediaHandle(template.media?.handle);
+    if (!isMetaMediaHandle(mediaHandle)) {
+      throw new Error('Meta media header sample is missing. Upload/change the media sample again, then submit.');
     }
 
     components.push({
       type: 'HEADER',
       format: mediaType.toUpperCase(),
       example: {
-        header_handle: [mediaUrl]
+        header_handle: [mediaHandle]
       }
     });
   } else if (template.header?.type === 'location') {
@@ -330,6 +429,11 @@ const submitTemplateToMeta = async (template) => {
   return data;
 };
 
+const isInvalidMetaMediaHandleError = (error) => {
+  const message = String(error?.message || '');
+  return /handle provided for the uploaded media|media header sample|media sample handle|header_handle/i.test(message);
+};
+
 const normalizeMetaTemplateStatus = (status) => {
   const normalized = String(status || '').toUpperCase();
   if (normalized === 'APPROVED') return 'approved';
@@ -426,32 +530,62 @@ const deleteTemplateFromMeta = async (template) => {
   if (!template.metaTemplateId && !template.name) return null;
 
   const { wabaId, accessToken } = await getTemplateMetaConfig(template.schoolId);
-  const url = new URL(`${getMetaGraphBaseUrl()}/${wabaId}/message_templates`);
+  const attempts = [];
 
-  if (template.metaTemplateId) {
-    url.searchParams.set('hsm_id', template.metaTemplateId);
-  } else {
-    url.searchParams.set('name', template.name);
+  const deleteWithParams = async (params) => {
+    const url = new URL(`${getMetaGraphBaseUrl()}/${wabaId}/message_templates`);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) url.searchParams.set(key, value);
+    });
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    });
+    const data = await response.json();
+
+    attempts.push({
+      params,
+      ok: response.ok && !data.error,
+      message: data.error?.message,
+      code: data.error?.code
+    });
+
+    if (!response.ok || data.error) {
+      const message = data.error?.message || 'Meta template deletion failed';
+      const code = data.error?.code;
+      if (/does not exist|not found/i.test(message)) {
+        return data;
+      }
+      throw new Error(message);
+    }
+
+    return data;
+  };
+
+  let lastResult = null;
+  const errors = [];
+  const deleteAttempts = [
+    template.metaTemplateId ? { hsm_id: template.metaTemplateId } : null,
+    template.name ? { name: template.name } : null
+  ].filter(Boolean);
+
+  for (const params of deleteAttempts) {
+    try {
+      lastResult = await deleteWithParams(params);
+    } catch (error) {
+      errors.push(error.message);
+    }
   }
 
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-  const data = await response.json();
-
-  if (!response.ok || data.error) {
-    const message = data.error?.message || 'Meta template deletion failed';
-    const code = data.error?.code;
-    if (code === 100 || /does not exist|not found/i.test(message)) {
-      return data;
-    }
-    throw new Error(message);
+  const deleted = attempts.some((attempt) => attempt.ok || /does not exist|not found/i.test(attempt.message || ''));
+  if (!deleted && errors.length) {
+    throw new Error([...new Set(errors)].join(' | '));
   }
 
-  return data;
+  return { result: lastResult, attempts };
 };
 
 exports.syncTemplates = async (req, res) => {
@@ -472,6 +606,8 @@ exports.syncTemplates = async (req, res) => {
       if (metaTemplate) {
         applyMetaTemplateStatus(template, metaTemplate);
         await template.save();
+      } else if (template.metaTemplateId || template.status !== 'draft') {
+        await template.deleteOne();
       }
     }
 
@@ -605,19 +741,49 @@ exports.uploadTemplateImage = async (req, res) => {
       });
     }
 
-    const url = `/uploads/templates/${req.file.filename}`;
+    let cloudinary = null;
+    try {
+      cloudinary = await uploadFileToCloudinary(req.file, {
+        folder: `waauto/${req.schoolId}/templates`
+      });
+    } catch (error) {
+      console.warn('Cloudinary template upload failed, using local upload:', error.message);
+    }
+
+    const localUrl = `/uploads/templates/${req.file.filename}`;
+    const url = cloudinary?.url || localUrl;
     const mediaType = req.file.mimetype.startsWith('image/')
       ? 'image'
       : req.file.mimetype.startsWith('video/')
         ? 'video'
         : 'document';
+    let metaHandle = '';
+    let metaUploadError = '';
+
+    try {
+      metaHandle = await uploadMediaSampleToMeta(req.schoolId, req.file);
+    } catch (error) {
+      metaUploadError = error.message;
+    }
+
+    if (!metaHandle) {
+      return res.status(400).json({
+        success: false,
+        message: `Media uploaded locally, but Meta sample upload failed: ${metaUploadError}`
+      });
+    }
 
     res.status(200).json({
       success: true,
       data: {
         type: mediaType,
         url,
-        publicUrl: getPublicAssetUrl(url),
+        localUrl,
+        publicUrl: cloudinary?.url || getPublicAssetUrl(url),
+        storage: cloudinary ? 'cloudinary' : 'local',
+        publicId: cloudinary?.publicId,
+        handle: metaHandle,
+        metaUploadError,
         filename: req.file.originalname,
         mimetype: req.file.mimetype
       }
@@ -699,8 +865,34 @@ exports.submitTemplate = async (req, res) => {
       });
     }
 
+    await ensureMetaMediaHandle(template);
     validateTemplateForMeta(template, { submitting: true });
-    const metaResponse = await submitTemplateToMeta(template);
+    let metaResponse;
+    try {
+      metaResponse = await submitTemplateToMeta(template);
+    } catch (error) {
+      if (!isInvalidMetaMediaHandleError(error) || !['image', 'video', 'document'].includes(template.header?.type)) {
+        throw error;
+      }
+
+      await ensureMetaMediaHandle(template, { force: true });
+      validateTemplateForMeta(template, { submitting: true });
+      try {
+        metaResponse = await submitTemplateToMeta(template);
+      } catch (retryError) {
+        if (!isInvalidMetaMediaHandleError(retryError) || template.header?.type !== 'image') {
+          throw retryError;
+        }
+
+        const compatibleSample = getCompatibleImageSampleFile(template.schoolId);
+        template.media.handle = await uploadMediaSampleToMeta(template.schoolId, compatibleSample);
+        template.media.filename = template.media.filename || compatibleSample.originalname;
+        template.media.mimetype = template.media.mimetype || compatibleSample.mimetype;
+        await template.save();
+        validateTemplateForMeta(template, { submitting: true });
+        metaResponse = await submitTemplateToMeta(template);
+      }
+    }
 
     template.status = String(metaResponse.status || '').toUpperCase() === 'APPROVED' ? 'approved' : 'pending';
     template.submittedAt = new Date();
@@ -740,8 +932,21 @@ exports.deleteTemplate = async (req, res) => {
     }
 
     let meta = null;
+    let metaDeleteError = '';
     if (template.metaTemplateId || template.status !== 'draft') {
-      meta = await deleteTemplateFromMeta(template);
+      try {
+        meta = await deleteTemplateFromMeta(template);
+      } catch (error) {
+        metaDeleteError = error.message;
+      }
+    }
+
+    if (metaDeleteError) {
+      return res.status(400).json({
+        success: false,
+        message: `Meta template delete failed: ${metaDeleteError}. Give the app/system user full control on the WABA, then try again.`,
+        metaDeleteError
+      });
     }
 
     await template.deleteOne();

@@ -51,6 +51,9 @@ export const schoolAPI = {
   uploadLogo: (data) => api.post('/schools/logo', data, {
     headers: { 'Content-Type': 'multipart/form-data' }
   }),
+  uploadAdmissionMedia: (data) => api.post('/schools/admission-media', data, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
   getStats: () => api.get('/schools/stats'),
   getMainFlowStatus: () => api.get('/schools/main-flow'),
   configureWhatsApp: (data) => api.put('/schools/whatsapp', data),
@@ -65,6 +68,7 @@ export const leadAPI = {
   createLead: (data) => api.post('/leads', data),
   updateLead: (id, data) => api.put(`/leads/${id}`, data),
   deleteLead: (id) => api.delete(`/leads/${id}`),
+  bulkDeleteLeads: (data) => api.delete('/leads/bulk', { data }),
   importLeads: (data) => api.post('/leads/import', data),
   exportLeads: (params) => api.get('/leads/export', { params, responseType: 'blob' }),
   getStats: () => api.get('/leads/stats')
@@ -112,6 +116,7 @@ export const broadcastAPI = {
   updateBroadcast: (id, data) => api.put(`/broadcasts/${id}`, data),
   deleteBroadcast: (id) => api.delete(`/broadcasts/${id}`),
   startBroadcast: (id) => api.post(`/broadcasts/${id}/start`),
+  resumeBroadcast: (id) => api.post(`/broadcasts/${id}/resume`),
   getStats: () => api.get('/broadcasts/stats')
 };
 

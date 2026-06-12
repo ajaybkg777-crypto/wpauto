@@ -8,6 +8,7 @@ const { validateEnv } = require('./config/env');
 const { asyncHandler, errorHandler, notFound } = require('./middleware/errorHandler');
 const { processDueScheduledBroadcasts } = require('./controllers/broadcastController');
 const { handleOnboardingCallback } = require('./controllers/whatsappController');
+const { runDataRetentionCleanup } = require('./services/dataRetentionService');
 
 // Load env vars
 dotenv.config();
@@ -34,11 +35,12 @@ app.set('trust proxy', 1);
 
 // Body parser. Keep the raw JSON bytes for Meta's X-Hub-Signature-256 check.
 app.use(express.json({
+  limit: process.env.JSON_BODY_LIMIT || '25mb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT || '25mb' }));
 
 // Enable CORS
 const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
@@ -132,11 +134,29 @@ const server = app.listen(PORT, () => {
 });
 
 if (process.env.ENABLE_SCHEDULER !== 'false') {
+  setTimeout(() => {
+    processDueScheduledBroadcasts().catch((error) => {
+      console.error('Initial broadcast worker error:', error);
+    });
+  }, 5 * 1000);
+
   setInterval(() => {
     processDueScheduledBroadcasts().catch((error) => {
       console.error('Scheduled broadcast worker error:', error);
     });
   }, 60 * 1000);
+
+  setTimeout(() => {
+    runDataRetentionCleanup()
+      .then((summary) => console.log('Data retention cleanup:', summary))
+      .catch((error) => console.error('Data retention cleanup error:', error));
+  }, 30 * 1000);
+
+  setInterval(() => {
+    runDataRetentionCleanup()
+      .then((summary) => console.log('Data retention cleanup:', summary))
+      .catch((error) => console.error('Data retention cleanup error:', error));
+  }, 24 * 60 * 60 * 1000);
 }
 
 // Handle unhandled promise rejections

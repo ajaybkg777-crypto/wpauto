@@ -8,6 +8,7 @@ const Message = require('../models/Message');
 const ChatbotRule = require('../models/ChatbotRule');
 const { encryptSecret } = require('../utils/tokenVault');
 const { syncMetaAccountForSchool } = require('../services/metaAccountService');
+const { uploadFileToCloudinary } = require('../services/cloudinaryService');
 
 const getAssetUrl = (req, filePath) => {
   if (!filePath) return '';
@@ -48,11 +49,35 @@ exports.getProfile = async (req, res) => {
 // @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, address, phone, email, website, logo, branding, category } = req.body;
+    const { name, address, phone, email, website, logo, branding, category, admissionAutomation } = req.body;
+    const cleanAdmissionAutomation = admissionAutomation ? {
+      processText: String(admissionAutomation.processText || '').trim(),
+      documentsText: String(admissionAutomation.documentsText || '').trim(),
+      feeStructureText: String(admissionAutomation.feeStructureText || '').trim(),
+      brochurePdfUrl: String(admissionAutomation.brochurePdfUrl || '').trim(),
+      brochureFilename: String(admissionAutomation.brochureFilename || 'Admission-Brochure.pdf').trim(),
+      schoolPhotoUrls: Array.isArray(admissionAutomation.schoolPhotoUrls)
+        ? admissionAutomation.schoolPhotoUrls.map((url) => String(url || '').trim()).filter(Boolean)
+        : String(admissionAutomation.schoolPhotoUrls || '')
+          .split(',')
+          .map((url) => url.trim())
+          .filter(Boolean),
+      campusVideoUrl: String(admissionAutomation.campusVideoUrl || '').trim()
+    } : undefined;
 
     const school = await School.findByIdAndUpdate(
       req.schoolId,
-      { name, address, phone, email, website, logo, branding, category: category || 'Education' },
+      {
+        name,
+        address,
+        phone,
+        email,
+        website,
+        logo,
+        branding,
+        category: category || 'Education',
+        ...(cleanAdmissionAutomation ? { admissionAutomation: cleanAdmissionAutomation } : {})
+      },
       { new: true, runValidators: true }
     );
 
@@ -80,7 +105,16 @@ exports.uploadLogo = async (req, res) => {
       });
     }
 
-    const logo = `/uploads/logos/${req.file.filename}`;
+    let cloudinary = null;
+    try {
+      cloudinary = await uploadFileToCloudinary(req.file, {
+        folder: `waauto/${req.schoolId}/logos`
+      });
+    } catch (error) {
+      console.warn('Cloudinary logo upload failed, using local upload:', error.message);
+    }
+
+    const logo = cloudinary?.url || `/uploads/logos/${req.file.filename}`;
     const school = await School.findByIdAndUpdate(
       req.schoolId,
       { logo },
@@ -91,7 +125,80 @@ exports.uploadLogo = async (req, res) => {
       success: true,
       data: {
         logo,
-        logoUrl: getAssetUrl(req, logo),
+        logoUrl: cloudinary?.url || getAssetUrl(req, logo),
+        storage: cloudinary ? 'cloudinary' : 'local',
+        publicId: cloudinary?.publicId,
+        school
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Upload admission automation media
+// @route   POST /api/schools/admission-media
+// @access  Private
+exports.uploadAdmissionMedia = async (req, res) => {
+  try {
+    const { type } = req.body;
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload a file'
+      });
+    }
+
+    if (!['brochure', 'photo', 'video'].includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose brochure, photo, or video'
+      });
+    }
+
+    let cloudinary = null;
+    try {
+      cloudinary = await uploadFileToCloudinary(req.file, {
+        folder: `waauto/${req.schoolId}/admission-media`
+      });
+    } catch (error) {
+      console.warn('Cloudinary admission media upload failed, using local upload:', error.message);
+    }
+
+    const filePath = `/uploads/admission-media/${req.file.filename}`;
+    const fileUrl = cloudinary?.url || getAssetUrl(req, filePath);
+    const update = {};
+
+    if (type === 'brochure') {
+      update['admissionAutomation.brochurePdfUrl'] = fileUrl;
+      update['admissionAutomation.brochureFilename'] = req.file.originalname || 'Admission-Brochure.pdf';
+    }
+
+    if (type === 'photo') {
+      update.$addToSet = { 'admissionAutomation.schoolPhotoUrls': fileUrl };
+    }
+
+    if (type === 'video') {
+      update['admissionAutomation.campusVideoUrl'] = fileUrl;
+    }
+
+    const school = await School.findByIdAndUpdate(
+      req.schoolId,
+      update,
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        type,
+        url: fileUrl,
+        filename: req.file.originalname,
+        storage: cloudinary ? 'cloudinary' : 'local',
+        publicId: cloudinary?.publicId,
         school
       }
     });

@@ -16,7 +16,7 @@ const SCHOOL_PLAN = {
   monthlyPrice: 999,
   yearlyPrice: 11988,
   features: {
-    maxLeads: 500,
+    maxLeads: Number(process.env.LIMIT_CONTACTS_BASIC || 2000),
     maxMessagesPerDay: 200,
     maxBroadcasts: 20,
     chatbotEnabled: true,
@@ -28,7 +28,7 @@ const SCHOOL_PLAN = {
   },
   limits: {
     maxUsers: 2,
-    maxContacts: 500,
+    maxContacts: Number(process.env.LIMIT_CONTACTS_BASIC || 2000),
     maxTemplates: 10
   },
   isActive: true,

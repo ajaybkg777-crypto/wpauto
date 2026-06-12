@@ -7,6 +7,7 @@ const {
   getProfile, 
   updateProfile, 
   uploadLogo,
+  uploadAdmissionMedia,
   getStats,
   getMainFlowStatus,
   configureWhatsApp,
@@ -42,6 +43,31 @@ const logoUpload = multer({
   }
 });
 
+const admissionMediaDir = path.join(__dirname, '..', 'uploads', 'admission-media');
+fs.mkdirSync(admissionMediaDir, { recursive: true });
+
+const admissionMediaStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, admissionMediaDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${req.schoolId}-${Date.now()}${ext}`);
+  }
+});
+
+const admissionMediaUpload = multer({
+  storage: admissionMediaStorage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = file.mimetype.startsWith('image/')
+      || file.mimetype.startsWith('video/')
+      || file.mimetype === 'application/pdf';
+    if (!allowed) {
+      return cb(new Error('Only image, video, or PDF files are allowed'));
+    }
+    cb(null, true);
+  }
+});
+
 // School owner routes
 router.use(asyncHandler(protect));
 router.use(attachSchoolId);
@@ -49,6 +75,7 @@ router.use(attachSchoolId);
 router.get('/profile', asyncHandler(getProfile));
 router.put('/profile', asyncHandler(updateProfile));
 router.post('/logo', logoUpload.single('logo'), asyncHandler(uploadLogo));
+router.post('/admission-media', admissionMediaUpload.single('file'), asyncHandler(uploadAdmissionMedia));
 router.get('/stats', asyncHandler(getStats));
 router.get('/main-flow', asyncHandler(getMainFlowStatus));
 router.put('/whatsapp', asyncHandler(configureWhatsApp));

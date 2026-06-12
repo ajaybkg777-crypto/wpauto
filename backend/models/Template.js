@@ -62,6 +62,8 @@ const templateSchema = new mongoose.Schema({
       default: undefined
     },
     url: String,
+    localUrl: String,
+    handle: String,
     filename: String,
     mimetype: String
   },

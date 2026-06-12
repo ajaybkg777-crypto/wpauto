@@ -41,6 +41,10 @@ const chatbotRuleSchema = new mongoose.Schema({
   }],
   actions: {
     addTags: [String],
+    sendAdmissionInfo: {
+      type: Boolean,
+      default: false
+    },
     setStatus: {
       type: String,
       enum: ['new', 'interested', 'not_interested', 'pending', 'converted', 'follow_up']
@@ -57,6 +61,10 @@ const chatbotRuleSchema = new mongoose.Schema({
         response: String,
         nextStepId: String,
         addTags: [String],
+        sendAdmissionInfo: {
+          type: Boolean,
+          default: false
+        },
         setStatus: {
           type: String,
           enum: ['new', 'interested', 'not_interested', 'pending', 'converted', 'follow_up']

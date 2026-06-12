@@ -1,10 +1,14 @@
 const Broadcast = require('../models/Broadcast');
 const Lead = require('../models/Lead');
+const Message = require('../models/Message');
 const School = require('../models/School');
 const Template = require('../models/Template');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
 const { createWhatsAppService } = require('../services/whatsappService');
+const { uploadFileToCloudinary } = require('../services/cloudinaryService');
 const { decryptSecret } = require('../utils/tokenVault');
+const { compactMessageRecord } = require('../utils/storagePolicy');
+const activeBroadcasts = new Set();
 
 const getPublicAssetUrl = (assetPath) => {
   if (!assetPath) return '';
@@ -19,6 +23,28 @@ const isTemplateBroadcastRequired = () => process.env.BROADCAST_ALLOW_FREEFORM !
 const getMetaGraphBaseUrl = () => {
   const version = process.env.META_GRAPH_API_VERSION || 'v25.0';
   return `https://graph.facebook.com/${version}`;
+};
+
+const readPositiveInt = (value, fallback, max = 500) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.min(Math.floor(number), max);
+};
+
+const runWithConcurrency = async (items, concurrency, worker) => {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 };
 
 const extractBodyVariables = (body = '') => {
@@ -370,14 +396,26 @@ exports.uploadBroadcastImage = async (req, res) => {
       });
     }
 
-    const url = `/uploads/broadcasts/${req.file.filename}`;
+    let cloudinary = null;
+    try {
+      cloudinary = await uploadFileToCloudinary(req.file, {
+        folder: `waauto/${req.schoolId}/broadcasts`
+      });
+    } catch (error) {
+      console.warn('Cloudinary broadcast upload failed, using local upload:', error.message);
+    }
+
+    const localUrl = `/uploads/broadcasts/${req.file.filename}`;
+    const url = cloudinary?.url || localUrl;
 
     res.status(200).json({
       success: true,
       data: {
         type: 'image',
         url,
-        publicUrl: getPublicAssetUrl(url),
+        publicUrl: cloudinary?.url || getPublicAssetUrl(url),
+        storage: cloudinary ? 'cloudinary' : 'local',
+        publicId: cloudinary?.publicId,
         filename: req.file.originalname
       }
     });
@@ -538,12 +576,63 @@ exports.startBroadcast = async (req, res) => {
   }
 };
 
+// @desc    Resume pending recipients in an interrupted broadcast
+// @route   POST /api/broadcasts/:id/resume
+// @access  Private
+exports.resumeBroadcast = async (req, res) => {
+  try {
+    await ensureMetaReady(req.schoolId);
+
+    const broadcast = await Broadcast.findOne({
+      _id: req.params.id,
+      schoolId: req.schoolId
+    });
+
+    if (!broadcast) {
+      return res.status(404).json({
+        success: false,
+        message: 'Broadcast not found'
+      });
+    }
+
+    const pendingCount = broadcast.recipients.filter((recipient) => recipient.status === 'pending').length;
+    if (!pendingCount) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending recipients left in this broadcast'
+      });
+    }
+
+    broadcast.status = 'processing';
+    broadcast.startedAt = broadcast.startedAt || new Date();
+    await broadcast.save();
+    processBroadcast(broadcast._id);
+
+    res.status(200).json({
+      success: true,
+      message: `Broadcast resumed for ${pendingCount} pending recipient(s)`,
+      data: broadcast
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // Process broadcast in background
 const processBroadcast = async (broadcastId) => {
+  const workerKey = String(broadcastId);
+  if (activeBroadcasts.has(workerKey)) return;
+  activeBroadcasts.add(workerKey);
+
   try {
     const broadcast = await Broadcast.findById(broadcastId);
-    const school = await School.findById(broadcast.schoolId).select('name');
+    if (!broadcast) return;
+    const school = await School.findById(broadcast.schoolId).select('name whatsapp');
     const whatsappService = createWhatsAppService(broadcast.schoolId);
+    const whatsappConfig = await whatsappService.getSchoolConfig();
     const template = broadcast.templateId
       ? await getApprovedTemplate(broadcast.schoolId, broadcast.templateId)
       : null;
@@ -555,6 +644,7 @@ const processBroadcast = async (broadcastId) => {
         if (recipient.status === 'pending') {
           recipient.status = 'failed';
           recipient.error = 'Approved WhatsApp template is required for broadcasts';
+          recipient.failedAt = new Date();
         }
       });
       broadcast.failedCount = broadcast.recipients.length;
@@ -562,13 +652,17 @@ const processBroadcast = async (broadcastId) => {
       return;
     }
 
-    const batchSize = 100;
-    const delayBetweenBatches = 3000;
+    const batchSize = readPositiveInt(process.env.BROADCAST_BATCH_SIZE, 200, 500);
+    const sendConcurrency = readPositiveInt(process.env.BROADCAST_SEND_CONCURRENCY, 15, 50);
+    const delayBetweenBatches = readPositiveInt(process.env.BROADCAST_BATCH_DELAY_MS, 250, 10000);
 
-    for (let i = 0; i < broadcast.recipients.length; i += batchSize) {
-      const batch = broadcast.recipients.slice(i, i + batchSize);
-      
-      for (const recipient of batch) {
+    const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
+
+    for (let i = 0; i < pendingRecipients.length; i += batchSize) {
+      const batch = pendingRecipients.slice(i, i + batchSize);
+
+      const messageWrites = [];
+      const batchResults = await runWithConcurrency(batch, sendConcurrency, async (recipient) => {
         try {
           const normalizedPhone = normalizeWhatsAppPhone(recipient.phone);
           if (!normalizedPhone) {
@@ -596,7 +690,7 @@ const processBroadcast = async (broadcastId) => {
             : mediaUrl
               ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
               : await whatsappService.sendMessage(normalizedPhone, broadcast.message);
-          
+
           const recipientIndex = broadcast.recipients.findIndex(
             r => r.phone === recipient.phone
           );
@@ -605,32 +699,74 @@ const processBroadcast = async (broadcastId) => {
             broadcast.recipients[recipientIndex].status = 'sent';
             broadcast.recipients[recipientIndex].messageId = result.messageId;
             broadcast.recipients[recipientIndex].sentAt = new Date();
-            broadcast.sentCount += 1;
-          } else {
-            broadcast.recipients[recipientIndex].status = 'failed';
-            broadcast.recipients[recipientIndex].error = result.error;
-            broadcast.failedCount += 1;
+
+            messageWrites.push({
+              updateOne: {
+                filter: { metaMessageId: result.messageId },
+                update: {
+                  $set: compactMessageRecord({
+                    schoolId: broadcast.schoolId,
+                    leadId: recipient.leadId,
+                    phoneNumberId: whatsappConfig.phoneNumberId || school.whatsapp?.phoneNumberId,
+                    wabaId: whatsappConfig.wabaId || school.whatsapp?.wabaId,
+                    userNumber: normalizedPhone,
+                    direction: 'outbound',
+                    message: template?.body || broadcast.message,
+                    messageType: templateName ? 'template' : mediaUrl ? 'image' : 'text',
+                    metaMessageId: result.messageId,
+                    status: 'sent',
+                    sentAt: new Date(),
+                    rawPayload: {
+                      source: 'broadcast',
+                      broadcastId: broadcast._id,
+                      templateName,
+                      templateVariables: variables?.values || []
+                    }
+                  })
+                },
+                upsert: true
+              }
+            });
+
+            return { success: true };
           }
+
+          broadcast.recipients[recipientIndex].status = 'failed';
+          broadcast.recipients[recipientIndex].error = result.error;
+          broadcast.recipients[recipientIndex].failedAt = new Date();
+          return { success: false };
         } catch (error) {
           const recipientIndex = broadcast.recipients.findIndex(
             r => r.phone === recipient.phone
           );
           broadcast.recipients[recipientIndex].status = 'failed';
           broadcast.recipients[recipientIndex].error = error.message;
-          broadcast.failedCount += 1;
+          broadcast.recipients[recipientIndex].failedAt = new Date();
+          return { success: false };
         }
-      }
+      });
 
       broadcast.currentBatch = Math.floor(i / batchSize) + 1;
+      broadcast.sentCount += batchResults.filter((result) => result?.success).length;
+      broadcast.failedCount += batchResults.filter((result) => result && !result.success).length;
+
+      if (messageWrites.length) {
+        await Message.bulkWrite(messageWrites, { ordered: false });
+      }
+
       await broadcast.save();
 
       // Delay between batches
-      if (i + batchSize < broadcast.recipients.length) {
+      if (i + batchSize < pendingRecipients.length) {
         await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
       }
     }
 
     // Update final status
+    broadcast.sentCount = broadcast.recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length;
+    broadcast.deliveredCount = broadcast.recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length;
+    broadcast.readCount = broadcast.recipients.filter((item) => item.status === 'read').length;
+    broadcast.failedCount = broadcast.recipients.filter((item) => item.status === 'failed').length;
     broadcast.status = 'completed';
     broadcast.completedAt = new Date();
     await broadcast.save();
@@ -645,8 +781,12 @@ const processBroadcast = async (broadcastId) => {
   } catch (error) {
     console.error('Broadcast processing error:', error);
     const broadcast = await Broadcast.findById(broadcastId);
-    broadcast.status = 'failed';
-    await broadcast.save();
+    if (broadcast) {
+      broadcast.status = 'failed';
+      await broadcast.save();
+    }
+  } finally {
+    activeBroadcasts.delete(workerKey);
   }
 };
 
@@ -662,7 +802,10 @@ exports.getBroadcastStats = async (req, res) => {
           _id: '$status',
           count: { $sum: 1 },
           totalRecipients: { $sum: '$totalRecipients' },
-          totalSent: { $sum: '$sentCount' }
+          totalSent: { $sum: '$sentCount' },
+          totalDelivered: { $sum: '$deliveredCount' },
+          totalRead: { $sum: '$readCount' },
+          totalFailed: { $sum: '$failedCount' }
         }
       }
     ]);
@@ -673,11 +816,21 @@ exports.getBroadcastStats = async (req, res) => {
       processing: 0,
       completed: 0,
       failed: 0,
-      cancelled: 0
+      cancelled: 0,
+      totalRecipients: 0,
+      totalSent: 0,
+      totalDelivered: 0,
+      totalRead: 0,
+      totalFailed: 0
     };
 
     stats.forEach(stat => {
       formattedStats[stat._id] = stat.count;
+      formattedStats.totalRecipients += stat.totalRecipients || 0;
+      formattedStats.totalSent += stat.totalSent || 0;
+      formattedStats.totalDelivered += stat.totalDelivered || 0;
+      formattedStats.totalRead += stat.totalRead || 0;
+      formattedStats.totalFailed += stat.totalFailed || 0;
     });
 
     res.status(200).json({
@@ -693,16 +846,18 @@ exports.getBroadcastStats = async (req, res) => {
 };
 
 exports.processDueScheduledBroadcasts = async () => {
-  const dueBroadcasts = await Broadcast.find({
-    status: 'scheduled',
-    scheduledAt: { $lte: new Date() }
+  const broadcasts = await Broadcast.find({
+    $or: [
+      { status: 'scheduled', scheduledAt: { $lte: new Date() } },
+      { status: 'processing', 'recipients.status': 'pending' }
+    ]
   }).select('_id');
 
-  for (const broadcast of dueBroadcasts) {
-    await Broadcast.findByIdAndUpdate(broadcast._id, {
-      status: 'processing',
-      startedAt: new Date()
-    });
+  for (const broadcast of broadcasts) {
+    await Broadcast.updateOne(
+      { _id: broadcast._id, status: 'scheduled' },
+      { status: 'processing', startedAt: new Date() }
+    );
     processBroadcast(broadcast._id);
   }
 };

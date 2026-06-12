@@ -7,6 +7,7 @@ const WhatsAppAccount = require('../models/WhatsAppAccount');
 const Message = require('../models/Message');
 const { encryptSecret } = require('../utils/tokenVault');
 const { syncMetaAccountForSchool } = require('../services/metaAccountService');
+const { leadConversationUpdate, shouldStoreRawPayloads } = require('../utils/storagePolicy');
 const jwt = require('jsonwebtoken');
 
 const getAppBaseUrl = (req) => {
@@ -486,12 +487,14 @@ exports.connectConfiguredAccount = async (req, res) => {
       status: 'connected',
       connectedAt: new Date(),
       lastOnboardingEventAt: new Date(),
-      accessToken: encryptSecret(process.env.META_SYSTEM_USER_ACCESS_TOKEN),
-      rawMetadata: {
+      accessToken: encryptSecret(process.env.META_SYSTEM_USER_ACCESS_TOKEN)
+    };
+    if (shouldStoreRawPayloads()) {
+      accountUpdate.rawMetadata = {
         source: 'server-config',
         graphApiVersion: process.env.META_GRAPH_API_VERSION
-      }
-    };
+      };
+    }
 
     school.whatsapp.provider = 'meta';
     school.whatsapp.appName = accountUpdate.appName;
@@ -625,9 +628,9 @@ exports.handleOnboardingCallback = async (req, res) => {
       accountReviewStatus: school.whatsapp.accountReviewStatus,
       namespace: school.whatsapp.namespace,
       status: school.whatsapp.onboardingStatus,
-      lastOnboardingEventAt: new Date(),
-      rawMetadata: data
+      lastOnboardingEventAt: new Date()
     };
+    if (shouldStoreRawPayloads()) accountUpdate.rawMetadata = data;
 
     if (encryptedAccessToken) accountUpdate.accessToken = encryptedAccessToken;
     if (school.whatsapp.isConnected) accountUpdate.connectedAt = new Date();
@@ -691,19 +694,13 @@ exports.sendMessage = async (req, res) => {
     if (result.success) {
       // Update lead conversation if leadId provided
       if (leadId) {
-        await Lead.findOneAndUpdate({ _id: leadId, schoolId: req.schoolId }, {
-          $push: {
-            conversation: {
-              from: 'school',
-              message,
-              timestamp: new Date(),
-              messageId: result.messageId,
-              status: 'sent'
-            }
-          },
-          lastMessage: message,
-          lastMessageAt: new Date()
-        });
+        await Lead.findOneAndUpdate({ _id: leadId, schoolId: req.schoolId }, leadConversationUpdate({
+          from: 'school',
+          message,
+          timestamp: new Date(),
+          messageId: result.messageId,
+          status: 'sent'
+        }));
       }
 
       await Message.create({
@@ -767,17 +764,13 @@ exports.sendTemplateMessage = async (req, res) => {
     if (result.success) {
       // Update lead if leadId provided
       if (leadId) {
-        await Lead.findOneAndUpdate({ _id: leadId, schoolId: req.schoolId }, {
-          $push: {
-            conversation: {
-              from: 'school',
-              message: `Template: ${templateId}`,
-              timestamp: new Date(),
-              messageId: result.messageId,
-              status: 'sent'
-            }
-          }
-        });
+        await Lead.findOneAndUpdate({ _id: leadId, schoolId: req.schoolId }, leadConversationUpdate({
+          from: 'school',
+          message: `Template: ${templateId}`,
+          timestamp: new Date(),
+          messageId: result.messageId,
+          status: 'sent'
+        }));
       }
 
       const school = await School.findById(req.schoolId);

@@ -2,11 +2,13 @@ const crypto = require('crypto');
 const Lead = require('../models/Lead');
 const School = require('../models/School');
 const ChatbotRule = require('../models/ChatbotRule');
+const Broadcast = require('../models/Broadcast');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
 const Message = require('../models/Message');
 const WhatsAppFlow = require('../models/WhatsAppFlow');
 const WhatsAppFlowSubmission = require('../models/WhatsAppFlowSubmission');
 const { createWhatsAppService } = require('../services/whatsappService');
+const { compactMessageRecord, leadConversationUpdate, shouldStoreRawPayloads } = require('../utils/storagePolicy');
 
 const formatOptions = (options = []) => {
   if (!options.length) return '';
@@ -163,6 +165,70 @@ const personalizeMessage = (message, school, lead) => {
   }, message);
 };
 
+const splitConfiguredUrls = (value = '') => String(value || '')
+  .split(',')
+  .map((url) => url.trim())
+  .filter((url) => /^https?:\/\//i.test(url));
+
+const buildAdmissionInfoText = (school) => [
+  school?.admissionAutomation?.processText || process.env.ADMISSION_PROCESS_TEXT || [
+    'Admission Process',
+    '1. Submit the admission form',
+    '2. Counselor verification call',
+    '3. Campus visit or online counseling',
+    '4. Document submission',
+    '5. Fee payment and admission confirmation'
+  ].join('\n'),
+  school?.admissionAutomation?.documentsText || process.env.ADMISSION_DOCUMENTS_TEXT || [
+    'Required Documents',
+    '- Student Aadhaar/Birth certificate',
+    '- Previous class marksheet',
+    '- Transfer certificate, if applicable',
+    '- Passport size photos',
+    '- Parent/guardian ID proof'
+  ].join('\n'),
+  school?.admissionAutomation?.feeStructureText || process.env.ADMISSION_FEE_STRUCTURE_TEXT || [
+    'Fee Structure',
+    `For latest fee details, our ${school?.name || 'school'} counselor will share the class-wise structure.`
+  ].join('\n')
+].join('\n\n');
+
+const sendAdmissionInfoPack = async (schoolId, lead) => {
+  const school = await School.findById(schoolId);
+  const whatsappService = createWhatsAppService(schoolId);
+  const results = [];
+
+  results.push(await whatsappService.sendMessage(lead.phone, buildAdmissionInfoText(school)));
+
+  const brochureUrl = school?.admissionAutomation?.brochurePdfUrl || process.env.ADMISSION_BROCHURE_PDF_URL;
+  if (/^https?:\/\//i.test(brochureUrl || '')) {
+    results.push(await whatsappService.sendDocumentMessage(
+      lead.phone,
+      brochureUrl,
+      school?.admissionAutomation?.brochureFilename || process.env.ADMISSION_BROCHURE_FILENAME || 'Admission-Brochure.pdf',
+      'Admission brochure'
+    ));
+  }
+
+  const photoUrls = (school?.admissionAutomation?.schoolPhotoUrls || []).length
+    ? school.admissionAutomation.schoolPhotoUrls.filter((url) => /^https?:\/\//i.test(url || ''))
+    : splitConfiguredUrls(process.env.ADMISSION_SCHOOL_PHOTOS_URLS);
+  for (const [index, photoUrl] of photoUrls.slice(0, 3).entries()) {
+    results.push(await whatsappService.sendImageMessage(
+      lead.phone,
+      photoUrl,
+      index === 0 ? `${school?.name || 'School'} photos` : ''
+    ));
+  }
+
+  const campusVideoUrl = school?.admissionAutomation?.campusVideoUrl || process.env.ADMISSION_CAMPUS_VIDEO_URL;
+  if (/^https?:\/\//i.test(campusVideoUrl || '')) {
+    results.push(await whatsappService.sendVideoMessage(lead.phone, campusVideoUrl, 'Campus video'));
+  }
+
+  return results;
+};
+
 const getEditDistance = (left = '', right = '') => {
   const a = String(left);
   const b = String(right);
@@ -206,17 +272,22 @@ const getIntentText = (message = '') => {
   const shortcuts = {
     '1': 'admission',
     '2': 'fees',
-    '3': 'counselor',
-    '4': 'courses',
-    '5': 'job'
+    '3': 'facilities',
+    '4': 'transport',
+    '5': 'student services',
+    '6': 'visit',
+    '7': 'career',
+    '8': 'counselor'
   };
 
   if (shortcuts[compact]) return shortcuts[compact];
   if (['hello', 'hey', 'hii', 'menu', 'start', 'namaste'].some((word) => isCloseMatch(compact, word))) return 'hi';
   if (['admission', 'admissions', 'addmission', 'admis', 'apply', 'dakhila', 'enquiry', 'inquiry', 'interested', 'intrested'].some((word) => isCloseMatch(compact, word))) return 'admission';
   if (['fee', 'fees', 'school fee', 'school fees', 'feez', 'price', 'pricing', 'cost', 'rate', 'package', 'charges', 'paisa', 'batao'].some((word) => isCloseMatch(compact, word))) return 'fees';
-  if (['course', 'courses', 'class', 'classes', 'program', 'programs', 'batch', 'batches'].some((word) => isCloseMatch(compact, word))) return 'courses';
-  if (['job', 'jobs', 'career', 'vacancy', 'teacher', 'hr'].some((word) => isCloseMatch(compact, word))) return 'job';
+  if (['facility', 'facilities', 'smart class', 'computer lab', 'science lab', 'library', 'sports', 'cctv'].some((word) => isCloseMatch(compact, word))) return 'facilities';
+  if (['student service', 'student services', 'attendance', 'homework', 'timetable', 'result', 'certificate', 'leave', 'complaint'].some((word) => isCloseMatch(compact, word))) return compact;
+  if (['course', 'courses', 'class', 'classes', 'program', 'programs', 'batch', 'batches'].some((word) => isCloseMatch(compact, word))) return 'admission';
+  if (['job', 'jobs', 'career', 'careers', 'vacancy', 'teacher', 'hr', 'prt', 'tgt', 'pgt'].some((word) => isCloseMatch(compact, word))) return 'career';
   if (['counsellor', 'counselor', 'counselling', 'counseling', 'call', 'callback', 'call back', 'contact', 'phone', 'help', 'baat', 'talk'].some((word) => isCloseMatch(compact, word))) return 'counselor';
   if (['visit', 'school visit', 'tour', 'campus', 'book visit', 'appointment', 'meeting', 'milna'].some((word) => isCloseMatch(compact, word))) return 'visit';
   if (['hostel', 'hostal', 'boarding'].some((word) => isCloseMatch(compact, word))) return 'hostel';
@@ -282,26 +353,21 @@ const handleFlowSubmission = async (schoolId, lead, normalized, rawPayload) => {
     phone: lead.phone,
     name: lead.name,
     answers,
-    rawPayload
+    ...(shouldStoreRawPayloads() ? { rawPayload } : {})
   });
 
   const update = {
-    $set: {
+    ...leadConversationUpdate({
+      from: 'user',
+      message: `WhatsApp Flow submitted${answerText ? `\n${answerText}` : ''}`,
+      timestamp: new Date()
+    }, {
       status: 'interested',
-      lastMessage: 'WhatsApp Flow submitted',
-      lastMessageAt: new Date(),
       notes: `${lead.notes ? `${lead.notes}\n\n` : ''}WhatsApp Flow Submission${flow?.title ? ` - ${flow.title}` : ''}\n${answerText}`
-    },
+    }),
     $addToSet: {
       tags: {
         $each: ['flow-submitted', flow?.name].filter(Boolean)
-      }
-    },
-    $push: {
-      conversation: {
-        from: 'user',
-        message: `WhatsApp Flow submitted${answerText ? `\n${answerText}` : ''}`,
-        timestamp: new Date()
       }
     }
   };
@@ -312,6 +378,7 @@ const handleFlowSubmission = async (schoolId, lead, normalized, rawPayload) => {
     lead,
     'Thanks for submitting the admission form. Our team has received your details and will contact you shortly.'
   );
+  await sendAdmissionInfoPack(schoolId, lead);
 };
 
 const findAdmissionFlow = async (schoolId) => {
@@ -348,21 +415,18 @@ const sendAdmissionFlowMessage = async (schoolId, lead, triggerText = '') => {
 
   if (result.success) {
     await Lead.findByIdAndUpdate(lead._id, {
-      $set: {
+      ...leadConversationUpdate({
+        from: 'school',
+        message: `Apply Now form sent${triggerText ? ` for: ${triggerText}` : ''}`,
+        timestamp: new Date(),
+        messageId: result.messageId,
+        status: 'sent'
+      }, {
         'chatbotSession.isActive': false,
         'chatbotSession.updatedAt': new Date()
-      },
+      }),
       $addToSet: {
         tags: { $each: ['flow-triggered', 'admission-flow'] }
-      },
-      $push: {
-        conversation: {
-          from: 'school',
-          message: `Apply Now form sent${triggerText ? ` for: ${triggerText}` : ''}`,
-          timestamp: new Date(),
-          messageId: result.messageId,
-          status: 'sent'
-        }
       }
     });
   }
@@ -381,17 +445,13 @@ const sendBotResponse = async (schoolId, lead, response, rule = null) => {
     : await whatsappService.sendMessage(lead.phone, personalizedResponse);
 
   if (result.success) {
-    await Lead.findByIdAndUpdate(lead._id, {
-      $push: {
-        conversation: {
-          from: 'school',
-          message: personalizedResponse,
-          timestamp: new Date(),
-          messageId: result.messageId,
-          status: 'sent'
-        }
-      }
-    });
+    await Lead.findByIdAndUpdate(lead._id, leadConversationUpdate({
+      from: 'school',
+      message: personalizedResponse,
+      timestamp: new Date(),
+      messageId: result.messageId,
+      status: 'sent'
+    }));
   }
 
   return result;
@@ -573,22 +633,14 @@ const handleIncomingMessage = async (payload) => {
   }
 
   await Promise.all([
-    Lead.findByIdAndUpdate(lead._id, {
-      $push: {
-        conversation: {
-          from: 'user',
-          message,
-          timestamp: new Date()
-        }
-      },
-      $set: {
-        lastMessage: message,
-        lastMessageAt: new Date()
-      }
-    }),
+    Lead.findByIdAndUpdate(lead._id, leadConversationUpdate({
+      from: 'user',
+      message,
+      timestamp: new Date()
+    })),
     Message.findOneAndUpdate(
       { metaMessageId: metaMessageId || `inbound_${school._id}_${phone}_${Date.now()}` },
-      {
+      compactMessageRecord({
         schoolId: school._id,
         leadId: lead._id,
         phoneNumberId,
@@ -600,7 +652,7 @@ const handleIncomingMessage = async (payload) => {
         metaMessageId,
         status: 'received',
         rawPayload: payload
-      },
+      }),
       { upsert: true, new: true, setDefaultsOnInsert: true }
     )
   ]);
@@ -611,20 +663,47 @@ const handleIncomingMessage = async (payload) => {
 
 // Handle status updates (delivered, read)
 const handleStatusUpdate = async (payload) => {
-  const { type, messageId, status } = payload;
+  const { messageId, status } = payload;
   const updateField = status === 'read' ? 'readAt'
     : status === 'delivered' ? 'deliveredAt'
       : status === 'failed' ? 'failedAt'
         : null;
+  const statusTime = new Date();
 
   if (messageId) {
     await Message.findOneAndUpdate(
       { metaMessageId: messageId },
       {
         status,
-        ...(updateField ? { [updateField]: new Date() } : {})
+        ...(updateField ? { [updateField]: statusTime } : {})
       }
     );
+
+    const broadcast = await Broadcast.findOne({ 'recipients.messageId': messageId });
+    if (broadcast) {
+      const recipient = broadcast.recipients.find((item) => item.messageId === messageId);
+      if (recipient) {
+        recipient.status = status;
+        if (status === 'delivered') recipient.deliveredAt = statusTime;
+        if (status === 'read') {
+          recipient.readAt = statusTime;
+          recipient.deliveredAt = recipient.deliveredAt || statusTime;
+        }
+        if (status === 'failed') {
+          const metaError = payload.errors?.[0] || {};
+          recipient.error = metaError.title || metaError.message || 'Meta delivery failed';
+          recipient.errorCode = metaError.code ? String(metaError.code) : undefined;
+          recipient.errorDetails = metaError.error_data?.details || metaError.details || undefined;
+          recipient.failedAt = statusTime;
+        }
+
+        broadcast.sentCount = broadcast.recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length;
+        broadcast.deliveredCount = broadcast.recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length;
+        broadcast.readCount = broadcast.recipients.filter((item) => item.status === 'read').length;
+        broadcast.failedCount = broadcast.recipients.filter((item) => item.status === 'failed').length;
+        await broadcast.save();
+      }
+    }
   }
 
   // Update lead conversation status
@@ -638,7 +717,7 @@ const handleStatusUpdate = async (payload) => {
       { 
         $set: { 
           'conversation.$.status': status,
-          ...(updateField ? { [updateField]: new Date() } : {})
+          ...(updateField ? { [updateField]: statusTime } : {})
         } 
       }
     );
@@ -719,6 +798,7 @@ const processChatbot = async (schoolId, lead, message) => {
                 messageId: flowResult.messageId,
                 trigger: selectedOption.label
               });
+              await sendAdmissionInfoPack(schoolId, activeLead);
               return;
             }
           }
@@ -750,6 +830,9 @@ const processChatbot = async (schoolId, lead, message) => {
           flowRule.lastTriggered = new Date();
           await flowRule.save();
           await sendBotResponse(schoolId, activeLead, response, flowRule);
+          if (selectedOption.sendAdmissionInfo) {
+            await sendAdmissionInfoPack(schoolId, activeLead);
+          }
           return;
         }
 
@@ -766,6 +849,7 @@ const processChatbot = async (schoolId, lead, message) => {
           messageId: flowResult.messageId,
           trigger: message
         });
+        await sendAdmissionInfoPack(schoolId, lead);
         return;
       }
     }
@@ -868,6 +952,9 @@ const processChatbot = async (schoolId, lead, message) => {
     // Send response if found
     if (response) {
       const result = await sendBotResponse(schoolId, lead, response, matchedRule);
+      if (matchedRule?.actions?.sendAdmissionInfo) {
+        await sendAdmissionInfoPack(schoolId, lead);
+      }
       webhookLog('bot send result', {
         success: result?.success,
         messageId: result?.messageId,

@@ -2,13 +2,13 @@ const Lead = require('../models/Lead');
 const Message = require('../models/Message');
 const School = require('../models/School');
 const { createWhatsAppService } = require('../services/whatsappService');
+const { leadConversationUpdate } = require('../utils/storagePolicy');
 
 const buildLastMessage = (lead) => {
-  const last = (lead.conversation || [])[lead.conversation.length - 1];
   return {
-    text: last?.message || lead.lastMessage || '',
-    from: last?.from || 'user',
-    at: last?.timestamp || lead.lastMessageAt || lead.updatedAt
+    text: lead.lastMessage || '',
+    from: 'user',
+    at: lead.lastMessageAt || lead.updatedAt
   };
 };
 
@@ -39,7 +39,7 @@ exports.getInbox = async (req, res) => {
         .sort({ lastMessageAt: -1, updatedAt: -1 })
         .skip(skip)
         .limit(pageSize)
-        .select('name phone email status tags lastMessage lastMessageAt conversation'),
+        .select('name phone email status tags lastMessage lastMessageAt updatedAt'),
       Lead.countDocuments(query)
     ]);
 
@@ -69,7 +69,7 @@ exports.getInbox = async (req, res) => {
 exports.getConversation = async (req, res) => {
   try {
     const lead = await Lead.findOne({ _id: req.params.leadId, schoolId: req.schoolId })
-      .select('name phone email status tags conversation lastMessage lastMessageAt');
+      .select('name phone email status tags lastMessage lastMessageAt');
 
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -86,7 +86,13 @@ exports.getConversation = async (req, res) => {
       success: true,
       data: {
         lead,
-        timeline: lead.conversation || [],
+        timeline: messageLedger.map((item) => ({
+          from: item.direction === 'outbound' ? 'school' : 'user',
+          message: item.message,
+          timestamp: item.createdAt,
+          messageId: item.metaMessageId,
+          status: item.status
+        })),
         ledger: messageLedger
       }
     });
@@ -124,21 +130,13 @@ exports.sendChatMessage = async (req, res) => {
       return res.status(400).json({ success: false, message: result.error || 'Failed to send message' });
     }
 
-    await Lead.findByIdAndUpdate(lead._id, {
-      $push: {
-        conversation: {
-          from: 'school',
-          message: String(message).trim(),
-          timestamp: new Date(),
-          messageId: result.messageId,
-          status: 'sent'
-        }
-      },
-      $set: {
-        lastMessage: String(message).trim(),
-        lastMessageAt: new Date()
-      }
-    });
+    await Lead.findByIdAndUpdate(lead._id, leadConversationUpdate({
+      from: 'school',
+      message: String(message).trim(),
+      timestamp: new Date(),
+      messageId: result.messageId,
+      status: 'sent'
+    }));
 
     await Message.create({
       schoolId: req.schoolId,
