@@ -69,7 +69,7 @@ exports.getInbox = async (req, res) => {
 exports.getConversation = async (req, res) => {
   try {
     const lead = await Lead.findOne({ _id: req.params.leadId, schoolId: req.schoolId })
-      .select('name phone email status tags lastMessage lastMessageAt');
+      .select('name phone email status tags lastMessage lastMessageAt conversation');
 
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -82,17 +82,27 @@ exports.getConversation = async (req, res) => {
       .sort({ createdAt: 1 })
       .select('direction message messageType status metaMessageId createdAt sentAt deliveredAt readAt failedAt');
 
+    const ledgerTimeline = messageLedger.map((item) => ({
+      from: item.direction === 'outbound' ? 'school' : 'user',
+      message: item.message,
+      timestamp: item.createdAt,
+      messageId: item.metaMessageId,
+      status: item.status
+    }));
+    const legacyTimeline = (lead.conversation || []).map((item) => ({
+      from: item.from,
+      message: item.message,
+      timestamp: item.timestamp,
+      messageId: item.messageId,
+      status: item.status
+    }));
+    const timeline = ledgerTimeline.length ? ledgerTimeline : legacyTimeline;
+
     res.status(200).json({
       success: true,
       data: {
         lead,
-        timeline: messageLedger.map((item) => ({
-          from: item.direction === 'outbound' ? 'school' : 'user',
-          message: item.message,
-          timestamp: item.createdAt,
-          messageId: item.metaMessageId,
-          status: item.status
-        })),
+        timeline,
         ledger: messageLedger
       }
     });
@@ -121,6 +131,24 @@ exports.sendChatMessage = async (req, res) => {
 
     if (school.limits.messagesUsedToday >= school.limits.maxMessagesPerDay) {
       return res.status(403).json({ success: false, message: 'Daily message limit reached' });
+    }
+
+    const lastInbound = await Message.findOne({
+      schoolId: req.schoolId,
+      leadId: lead._id,
+      direction: 'inbound'
+    }).sort({ createdAt: -1 }).select('createdAt');
+    const legacyInbound = (lead.conversation || [])
+      .filter((item) => item.from === 'user' && item.timestamp)
+      .sort((left, right) => new Date(right.timestamp) - new Date(left.timestamp))[0];
+    const lastInboundAt = lastInbound?.createdAt || legacyInbound?.timestamp;
+    const customerWindowMs = Number(process.env.WHATSAPP_CUSTOMER_WINDOW_HOURS || 24) * 60 * 60 * 1000;
+
+    if (!lastInboundAt || Date.now() - new Date(lastInboundAt).getTime() > customerWindowMs) {
+      return res.status(400).json({
+        success: false,
+        message: 'WhatsApp free-text chat is available only within 24 hours of the customer reply. Send an approved template/broadcast first, then continue live chat after they reply.'
+      });
     }
 
     const whatsappService = createWhatsAppService(req.schoolId);
