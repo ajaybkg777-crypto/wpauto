@@ -7,6 +7,9 @@ const sanitizeFlow = (flow) => {
     ...flow,
     steps: (flow.steps || []).map((step) => ({
       ...step,
+      inputType: step.inputType || (['input', 'text'].includes(step.type) ? 'text' : step.type) || '',
+      saveAnswerAs: step.saveAnswerAs || step.saveAs || step.save_as || '',
+      nextStepId: step.nextStepId || step.next || '',
       options: (step.options || []).map((option) => {
         const nextOption = {
           ...option,

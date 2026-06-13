@@ -375,6 +375,29 @@ const matchesFlowOption = (option, incoming, index) => {
     || (normalizedValue === 'no' && noWords.includes(incoming));
 };
 
+const normalizeFlowPhoneAnswer = (value = '') => {
+  const digits = String(value).replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 10 && /^[6-9]/.test(digits)) return `91${digits}`;
+  if (digits.length === 12 && digits.startsWith('91') && /^[6-9]/.test(digits.slice(2))) return digits;
+  if (digits.length >= 8 && digits.length <= 15) return digits;
+  return '';
+};
+
+const isPhoneInputStep = (step = {}) => {
+  const type = String(step.inputType || step.type || '').toLowerCase();
+  const label = `${step.question || ''} ${step.saveAnswerAs || ''} ${step.save_as || ''}`.toLowerCase();
+  return type === 'phone' || /mobile|phone|whatsapp|number/.test(label);
+};
+
+const getNextFlowStep = (flow = {}, currentStep = {}) => {
+  if (!flow?.steps?.length || !currentStep) return null;
+  const explicitNextId = currentStep.nextStepId || currentStep.next || '';
+  if (explicitNextId) return flow.steps.find((step) => step.id === explicitNextId) || null;
+  const currentIndex = flow.steps.findIndex((step) => step.id === currentStep.id);
+  return currentIndex >= 0 ? flow.steps[currentIndex + 1] || null : null;
+};
+
 const applyChatbotActions = async (leadId, actions = {}) => {
   const update = {};
 
@@ -885,22 +908,41 @@ const processChatbot = async (schoolId, lead, message) => {
           return matchesFlowOption(option, incoming, index);
         });
 
-        if (!selectedOption && currentStep?.inputType && currentStep?.nextStepId) {
-          const nextStep = flowRule.flow.steps.find((step) => step.id === currentStep.nextStepId);
+        const isInputStep = !selectedOption
+          && currentStep
+          && (!currentStep.options?.length || currentStep.inputType || currentStep.type);
+
+        if (isInputStep) {
+          const phoneStep = isPhoneInputStep(currentStep);
+          const normalizedPhone = phoneStep ? normalizeFlowPhoneAnswer(message) : '';
+          if (phoneStep && !normalizedPhone) {
+            const fallback = currentStep.fallbackResponse || 'Please enter a valid WhatsApp mobile number, for example 9826763101 or +919826763101.';
+            await sendBotResponse(schoolId, activeLead, fallback, flowRule);
+            return;
+          }
+
+          const nextStep = getNextFlowStep(flowRule.flow, currentStep);
           const response = buildStepMessage(nextStep);
           const update = {
             $set: {
-              'chatbotSession.currentStepId': currentStep.nextStepId,
+              'chatbotSession.currentStepId': nextStep?.id || currentStep.id,
+              'chatbotSession.isActive': Boolean(nextStep),
               'chatbotSession.updatedAt': new Date()
             }
           };
 
-          if (currentStep.saveAnswerAs) {
-            update.$set.notes = `${activeLead.notes ? `${activeLead.notes}\n` : ''}${currentStep.saveAnswerAs}: ${message}`;
+          const answerKey = currentStep.saveAnswerAs || currentStep.save_as || currentStep.id;
+          if (answerKey) {
+            update.$set.notes = `${activeLead.notes ? `${activeLead.notes}\n` : ''}${answerKey}: ${normalizedPhone || message}`;
           }
 
           await Lead.findByIdAndUpdate(activeLead._id, update);
-          await sendBotResponse(schoolId, activeLead, response, flowRule);
+          await sendBotResponse(
+            schoolId,
+            activeLead,
+            response || 'Thank you. Our team will contact you shortly.',
+            flowRule
+          );
           return;
         }
 

@@ -55,6 +55,13 @@ const chatbotRuleSchema = new mongoose.Schema({
     steps: [{
       id: String,
       question: String,
+      inputType: {
+        type: String,
+        enum: ['text', 'phone', 'email', 'number', 'date', ''],
+        default: ''
+      },
+      saveAnswerAs: String,
+      nextStepId: String,
       options: [{
         label: String,
         value: String,
