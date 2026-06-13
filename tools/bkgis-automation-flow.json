@@ -1,0 +1,234 @@
+{
+  "school": {
+    "name": "BKG International School",
+    "city": "Khargone",
+    "address": "Beed Fata, Sanawad Road, Khargone, Madhya Pradesh, 451001",
+    "phone": "+919826763101",
+    "helpdesk": "+917610163101",
+    "website": "https://bkgis.in",
+    "tagline": "Learning Today, Leading Tomorrow"
+  },
+  "media": {
+    "brochurePdfUrl": "",
+    "brochureFilename": "BKGIS-Admission-Brochure.pdf",
+    "schoolPhotoUrls": [],
+    "campusVideoUrl": "",
+    "locationUrl": "https://maps.google.com/?q=Beed+Fata+Sanawad+Road+Khargone+Madhya+Pradesh+451001"
+  },
+  "welcome_flow": {
+    "trigger_keywords": [
+      "hi",
+      "hello",
+      "hey",
+      "admission",
+      "fees",
+      "school",
+      "transport",
+      "contact"
+    ],
+    "message": "Welcome to BKG International School, Khargone\n\nHello!\n\nThank you for contacting BKG International School.\n\nWe are committed to providing quality education and a bright future for every child.\n\nPlease choose an option below:\n\n1. Admission Inquiry\n2. Fee Structure\n3. About the School\n4. Transport Facility\n5. Talk to Our Team\n6. School Photos & Videos\n7. School Location\n8. Contact Us",
+    "options": [
+      {
+        "id": "1",
+        "label": "Admission Inquiry",
+        "flow": "admission_inquiry_flow"
+      },
+      {
+        "id": "2",
+        "label": "Fee Structure",
+        "flow": "fee_structure_flow"
+      },
+      {
+        "id": "3",
+        "label": "About the School",
+        "flow": "about_school_flow"
+      },
+      {
+        "id": "4",
+        "label": "Transport Facility",
+        "flow": "transport_flow"
+      },
+      {
+        "id": "5",
+        "label": "Talk to Our Team",
+        "flow": "team_support_flow"
+      },
+      {
+        "id": "6",
+        "label": "School Photos & Videos",
+        "flow": "media_flow"
+      },
+      {
+        "id": "7",
+        "label": "School Location",
+        "flow": "location_flow"
+      },
+      {
+        "id": "8",
+        "label": "Contact Us",
+        "flow": "contact_flow"
+      }
+    ]
+  },
+  "flows": {
+    "admission_inquiry_flow": {
+      "title": "Admission Inquiry",
+      "steps": [
+        {
+          "id": "class_group",
+          "type": "select",
+          "question": "Thank you for your interest in admission. Please select the class:",
+          "options": [
+            "Nursery - UKG",
+            "Class 1 - 5",
+            "Class 6 - 8",
+            "Class 9 - 12"
+          ],
+          "save_as": "interested_class"
+        },
+        {
+          "id": "student_name",
+          "type": "input",
+          "question": "Please enter the Student's Name",
+          "save_as": "student_name"
+        },
+        {
+          "id": "parent_name",
+          "type": "input",
+          "question": "Please enter Parent/Guardian Name",
+          "save_as": "parent_name"
+        },
+        {
+          "id": "mobile_number",
+          "type": "phone",
+          "question": "Please enter Mobile Number",
+          "save_as": "mobile_number"
+        }
+      ],
+      "completion_message": "Thank you! Your admission inquiry has been successfully submitted. Our Admission Team will contact you shortly.",
+      "actions": {
+        "set_status": "interested",
+        "add_tags": [
+          "admission_inquiry",
+          "hot_lead"
+        ],
+        "send_brochure_pdf": true,
+        "notify_team": "admission"
+      }
+    },
+    "fee_structure_flow": {
+      "title": "Fee Structure",
+      "steps": [
+        {
+          "id": "mobile_number",
+          "type": "phone",
+          "question": "Please enter Mobile Number",
+          "save_as": "mobile_number"
+        }
+      ],
+      "completion_message": "Thank you! Our Admission Team will contact you shortly with fee details.",
+      "actions": {
+        "set_status": "interested",
+        "add_tags": [
+          "fee_inquiry"
+        ],
+        "send_brochure_pdf": true,
+        "notify_team": "admission"
+      }
+    },
+    "about_school_flow": {
+      "title": "About the School",
+      "message": "Why Choose BKG International School?\n\n- CBSE Curriculum\n- Smart Classrooms\n- Computer Lab\n- Science Lab\n- Library Facility\n- Sports & Co-Curricular Activities\n- Experienced Teachers\n- Safe & Secure Campus\n\nLocation:\nBeed Fata, Sanawad Road, Khargone, Madhya Pradesh, 451001\n\nContact:\n+919826763101",
+      "actions": {
+        "add_tags": [
+          "about_school"
+        ]
+      }
+    },
+    "transport_flow": {
+      "title": "Transport Facility",
+      "steps": [
+        {
+          "id": "area_name",
+          "type": "input",
+          "question": "School bus service is available in selected areas. Please enter your Area/Village Name. Examples: Kasrawad, Bhikangaon, Sanawad Road",
+          "save_as": "area_name"
+        }
+      ],
+      "completion_message": "Thank you! Our Transport Team will check availability and contact you shortly.",
+      "actions": {
+        "set_status": "interested",
+        "add_tags": [
+          "transport_inquiry"
+        ],
+        "notify_team": "transport"
+      }
+    },
+    "team_support_flow": {
+      "title": "Talk to Our Team",
+      "steps": [
+        {
+          "id": "department",
+          "type": "select",
+          "question": "Please select a department:",
+          "options": [
+            "Admission Team",
+            "Director Office",
+            "Principal Office"
+          ],
+          "save_as": "department"
+        },
+        {
+          "id": "question",
+          "type": "input",
+          "question": "Please type your question.",
+          "save_as": "question"
+        }
+      ],
+      "completion_message": "Thank you. Our team will respond as soon as possible.",
+      "actions": {
+        "add_tags": [
+          "team_support"
+        ],
+        "notify_team": "selected_department"
+      }
+    },
+    "media_flow": {
+      "title": "School Photos & Videos",
+      "message": "Here are school photos and videos.",
+      "actions": {
+        "send_school_photos": true,
+        "send_campus_video": true
+      }
+    },
+    "location_flow": {
+      "title": "School Location",
+      "message": "BKG International School location: https://maps.google.com/?q=Beed+Fata+Sanawad+Road+Khargone+Madhya+Pradesh+451001",
+      "actions": {
+        "add_tags": [
+          "location_requested"
+        ]
+      }
+    },
+    "contact_flow": {
+      "title": "Contact Us",
+      "message": "BKG International School\n\nHelpdesk: +917610163101\nPhone: +919826763101\nWebsite: https://bkgis.in\nAddress: Beed Fata, Sanawad Road, Khargone, Madhya Pradesh, 451001",
+      "actions": {
+        "add_tags": [
+          "contact_requested"
+        ]
+      }
+    }
+  },
+  "stop_opt_out": {
+    "enabled": true,
+    "keywords": [
+      "STOP",
+      "UNSUBSCRIBE",
+      "OPT OUT",
+      "BAND KARO",
+      "MSG BAND"
+    ],
+    "action": "mark_do_not_send"
+  }
+}
