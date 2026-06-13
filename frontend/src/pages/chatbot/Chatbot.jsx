@@ -89,6 +89,7 @@ export function flowToGraph(flow) {
 }
 
 function jsonToGraph(payload) {
+  if (payload?.welcome_flow && payload?.flows) return flowToGraph(automationConfigToFlow(payload));
   if (payload?.steps?.length) return flowToGraph(payload);
 
   if (Array.isArray(payload?.nodes)) {
@@ -122,6 +123,117 @@ function jsonToGraph(payload) {
   }
 
   throw new Error('Invalid chatbot flow JSON');
+}
+
+function normalizeStepInputType(type = '') {
+  const value = String(type || '').toLowerCase();
+  if (value === 'input') return 'text';
+  if (['text', 'phone', 'email', 'number', 'date'].includes(value)) return value;
+  return '';
+}
+
+function slugifyId(value = '') {
+  return String(value || 'step')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'step';
+}
+
+function automationConfigToFlow(config = {}) {
+  const steps = [];
+  const flowEntries = Object.entries(config.flows || {});
+  const firstStepByFlow = new Map();
+
+  flowEntries.forEach(([flowKey, flow]) => {
+    const sourceSteps = Array.isArray(flow.steps) ? flow.steps : [];
+    if (!sourceSteps.length) return;
+    firstStepByFlow.set(flowKey, `${slugifyId(flowKey)}_${slugifyId(sourceSteps[0].id || 'start')}`);
+  });
+
+  const welcomeOptions = (config.welcome_flow?.options || []).map((option) => {
+    const targetFlow = config.flows?.[option.flow];
+    const firstStepId = firstStepByFlow.get(option.flow);
+    return {
+      label: option.label || option.name || option.id,
+      value: slugifyId(option.label || option.name || option.id),
+      response: targetFlow?.steps?.length ? (targetFlow.title || option.label || '') : (targetFlow?.message || ''),
+      ...(firstStepId ? { nextStepId: firstStepId, endFlow: false } : { endFlow: true }),
+      addTags: targetFlow?.actions?.add_tags || targetFlow?.actions?.addTags || [],
+      setStatus: targetFlow?.actions?.set_status || targetFlow?.actions?.setStatus || '',
+      sendAdmissionInfo: Boolean(targetFlow?.actions?.send_brochure_pdf || targetFlow?.actions?.sendAdmissionInfo),
+    };
+  });
+
+  steps.push({
+    id: 'welcome_menu',
+    question: config.welcome_flow?.message || 'Welcome. Please choose an option.',
+    options: welcomeOptions,
+    fallbackResponse: 'Please choose one of the listed options.'
+  });
+
+  flowEntries.forEach(([flowKey, flow]) => {
+    const prefix = slugifyId(flowKey);
+    const sourceSteps = Array.isArray(flow.steps) ? flow.steps : [];
+
+    if (!sourceSteps.length) return;
+
+    sourceSteps.forEach((sourceStep, index) => {
+      const stepId = `${prefix}_${slugifyId(sourceStep.id || `step_${index + 1}`)}`;
+      const nextSourceStep = sourceSteps[index + 1];
+      const nextStepId = nextSourceStep
+        ? `${prefix}_${slugifyId(nextSourceStep.id || `step_${index + 2}`)}`
+        : `${prefix}_complete`;
+      const inputType = normalizeStepInputType(sourceStep.inputType || sourceStep.type);
+      const rawOptions = Array.isArray(sourceStep.options) ? sourceStep.options : [];
+      const options = rawOptions.map((item, optionIndex) => {
+        const label = typeof item === 'string' ? item : item.label || item.name || `Option ${optionIndex + 1}`;
+        return {
+          ...(typeof item === 'object' ? item : {}),
+          label,
+          value: slugifyId(typeof item === 'string' ? item : item.value || label),
+          nextStepId,
+          endFlow: false
+        };
+      });
+
+      steps.push({
+        id: stepId,
+        question: sourceStep.question || sourceStep.message || `Step ${index + 1}`,
+        ...(inputType ? { inputType } : {}),
+        ...(sourceStep.save_as || sourceStep.saveAs || sourceStep.saveAnswerAs
+          ? { saveAnswerAs: sourceStep.save_as || sourceStep.saveAs || sourceStep.saveAnswerAs }
+          : {}),
+        ...(!options.length ? { nextStepId } : {}),
+        options,
+        fallbackResponse: inputType === 'phone'
+          ? 'Please enter a valid WhatsApp mobile number, for example 9826763101 or +919826763101.'
+          : 'Please reply with one of the listed options.'
+      });
+    });
+
+    steps.push({
+      id: `${prefix}_complete`,
+      question: flow.completion_message || 'Thank you. Our team will contact you shortly.',
+      options: [
+        {
+          label: 'Back to Menu',
+          value: 'menu',
+          response: 'Opening main menu.',
+          nextStepId: 'welcome_menu',
+          endFlow: false,
+          addTags: flow.actions?.add_tags || flow.actions?.addTags || [],
+          setStatus: flow.actions?.set_status || flow.actions?.setStatus || '',
+          sendAdmissionInfo: Boolean(flow.actions?.send_brochure_pdf || flow.actions?.sendAdmissionInfo)
+        }
+      ],
+      fallbackResponse: 'Thank you. Our team will contact you shortly.'
+    });
+  });
+
+  return {
+    startStepId: 'welcome_menu',
+    steps
+  };
 }
 
 export function flowToApiPayload(nodes, edges) {
