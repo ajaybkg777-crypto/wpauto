@@ -12,14 +12,23 @@ const buildLastMessage = (lead) => {
   };
 };
 
+const getChatWindowStart = (days = 7) => {
+  const safeDays = Math.max(1, Math.min(Number(days) || 7, 90));
+  return new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+};
+
 // @desc    Get inbox list for live chat
 // @route   GET /api/chats/inbox
 // @access  Private
 exports.getInbox = async (req, res) => {
   try {
-    const { search = '', status = '', tag = '', page = 1, limit = 25 } = req.query;
+    const { search = '', status = '', tag = '', page = 1, limit = 25, days = 7 } = req.query;
+    const windowStart = getChatWindowStart(days);
 
-    const query = { schoolId: req.schoolId };
+    const query = {
+      schoolId: req.schoolId,
+      lastMessageAt: { $gte: windowStart }
+    };
     if (status) query.status = status;
     if (tag) query.tags = tag;
     if (search) {
@@ -48,6 +57,8 @@ exports.getInbox = async (req, res) => {
       total,
       page: pageNumber,
       pages: Math.ceil(total / pageSize),
+      windowDays: Number(days) || 7,
+      windowStart,
       data: leads.map((lead) => ({
         _id: lead._id,
         name: lead.name,
@@ -68,6 +79,7 @@ exports.getInbox = async (req, res) => {
 // @access  Private
 exports.getConversation = async (req, res) => {
   try {
+    const windowStart = getChatWindowStart(req.query.days || 7);
     const lead = await Lead.findOne({ _id: req.params.leadId, schoolId: req.schoolId })
       .select('name phone email status tags lastMessage lastMessageAt conversation');
 
@@ -77,7 +89,8 @@ exports.getConversation = async (req, res) => {
 
     const messageLedger = await Message.find({
       schoolId: req.schoolId,
-      leadId: lead._id
+      leadId: lead._id,
+      createdAt: { $gte: windowStart }
     })
       .sort({ createdAt: 1 })
       .select('direction message messageType status metaMessageId createdAt sentAt deliveredAt readAt failedAt');
@@ -89,13 +102,15 @@ exports.getConversation = async (req, res) => {
       messageId: item.metaMessageId,
       status: item.status
     }));
-    const legacyTimeline = (lead.conversation || []).map((item) => ({
-      from: item.from,
-      message: item.message,
-      timestamp: item.timestamp,
-      messageId: item.messageId,
-      status: item.status
-    }));
+    const legacyTimeline = (lead.conversation || [])
+      .filter((item) => !item.timestamp || new Date(item.timestamp) >= windowStart)
+      .map((item) => ({
+        from: item.from,
+        message: item.message,
+        timestamp: item.timestamp,
+        messageId: item.messageId,
+        status: item.status
+      }));
     const timeline = ledgerTimeline.length ? ledgerTimeline : legacyTimeline;
 
     res.status(200).json({
@@ -103,7 +118,8 @@ exports.getConversation = async (req, res) => {
       data: {
         lead,
         timeline,
-        ledger: messageLedger
+        ledger: messageLedger,
+        windowStart
       }
     });
   } catch (error) {

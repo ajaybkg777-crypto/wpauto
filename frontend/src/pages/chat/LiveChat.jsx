@@ -35,7 +35,7 @@ export default function LiveChat() {
     if (!quiet) setLoading(true);
     try {
       const [inboxResponse, whatsappResponse] = await Promise.all([
-        chatAPI.getInbox({ search, limit: 100 }),
+        chatAPI.getInbox({ search, limit: 100, days: 7 }),
         whatsappAPI.getConfig()
       ]);
       const rows = inboxResponse.data.data || [];
@@ -53,7 +53,7 @@ export default function LiveChat() {
   const fetchConversation = async (leadId, { quiet = false } = {}) => {
     if (!leadId) return;
     try {
-      const response = await chatAPI.getConversation(leadId);
+      const response = await chatAPI.getConversation(leadId, { days: 7 });
       setConversation(response.data.data || { lead: null, timeline: [] });
     } catch (error) {
       if (!quiet) toast.error(error.response?.data?.message || 'Could not load conversation');
@@ -123,7 +123,7 @@ export default function LiveChat() {
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">WhatsApp Inbox</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">Live Chat Center</h1>
-          <p className="mt-1 text-sm font-medium text-slate-500">Handle customer replies and send WhatsApp messages from one workspace.</p>
+          <p className="mt-1 text-sm font-medium text-slate-500">Handle customer replies from the last 7 days and send WhatsApp messages from one workspace.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-bold ${metaReady ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
