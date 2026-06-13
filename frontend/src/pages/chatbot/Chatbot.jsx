@@ -82,7 +82,7 @@ export function flowToGraph(flow) {
       }
     });
     if ((!step.options || step.options.length === 0) && step.nextStepId) {
-      edges.push({ id: uid(), from: step.id, to: step.nextStepId, label: 'Next' });
+      edges.push({ id: uid(), from: step.id, to: step.nextStepId, label: '' });
     }
   });
   return { nodes, edges };
@@ -657,6 +657,7 @@ function MobilePreview({ nodes, edges, selectedNodeId }) {
     if (!node) return [];
     const stepOptions = node.stepData?.options || [];
     if (stepOptions.length) return stepOptions;
+    if (node.stepData?.inputType) return [];
     return edges.filter((edge) => edge.from === node.id).map((edge, index) => ({
       label: edge.label || `Option ${index + 1}`,
       value: edge.label || `${index + 1}`,
