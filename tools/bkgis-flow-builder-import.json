@@ -1,0 +1,305 @@
+{
+  "startStepId": "welcome_menu",
+  "steps": [
+    {
+      "id": "welcome_menu",
+      "question": "Welcome to BKG International School, Khargone\n\nHello!\n\nThank you for contacting BKG International School.\n\nWe are committed to providing quality education and a bright future for every child.\n\nPlease choose an option below:",
+      "fallbackResponse": "Please choose a valid option: Admission Inquiry, Fee Structure, About School, Transport Facility, Talk to Our Team, School Photos & Videos, School Location, or Contact Us.",
+      "options": [
+        {
+          "label": "Admission Inquiry",
+          "value": "admission",
+          "response": "Thank you for your interest in admission.",
+          "nextStepId": "admission_class",
+          "addTags": [
+            "admission_inquiry"
+          ],
+          "setStatus": "interested",
+          "endFlow": false
+        },
+        {
+          "label": "Fee Structure",
+          "value": "fees",
+          "response": "Please share your mobile number. Our Admission Team will share the latest fee details.",
+          "nextStepId": "fee_mobile",
+          "addTags": [
+            "fee_inquiry"
+          ],
+          "setStatus": "interested",
+          "endFlow": false
+        },
+        {
+          "label": "About the School",
+          "value": "about",
+          "response": "Why Choose BKG International School?\n\n- CBSE Curriculum\n- Smart Classrooms\n- Computer Lab\n- Science Lab\n- Library Facility\n- Sports & Co-Curricular Activities\n- Experienced Teachers\n- Safe & Secure Campus\n\nLocation: Beed Fata, Sanawad Road, Khargone, Madhya Pradesh, 451001\nContact: +919826763101",
+          "addTags": [
+            "about_school"
+          ],
+          "endFlow": true
+        },
+        {
+          "label": "Transport Facility",
+          "value": "transport",
+          "response": "School bus service is available in selected areas.",
+          "nextStepId": "transport_area",
+          "addTags": [
+            "transport_inquiry"
+          ],
+          "setStatus": "interested",
+          "endFlow": false
+        },
+        {
+          "label": "Talk to Our Team",
+          "value": "team",
+          "response": "Please select the department.",
+          "nextStepId": "team_department",
+          "addTags": [
+            "team_support"
+          ],
+          "setStatus": "follow_up",
+          "endFlow": false
+        },
+        {
+          "label": "School Photos & Videos",
+          "value": "media",
+          "response": "School photos and campus video will be shared by our team shortly.",
+          "addTags": [
+            "media_requested"
+          ],
+          "endFlow": true
+        },
+        {
+          "label": "School Location",
+          "value": "location",
+          "response": "School Location:\nhttps://maps.google.com/?q=Beed+Fata+Sanawad+Road+Khargone+Madhya+Pradesh+451001",
+          "addTags": [
+            "location_requested"
+          ],
+          "endFlow": true
+        },
+        {
+          "label": "Contact Us",
+          "value": "contact",
+          "response": "BKG International School\n\nHelpdesk: +917610163101\nPhone: +919826763101\nWebsite: https://bkgis.in\nAddress: Beed Fata, Sanawad Road, Khargone, Madhya Pradesh, 451001",
+          "addTags": [
+            "contact_requested"
+          ],
+          "endFlow": true
+        }
+      ]
+    },
+    {
+      "id": "admission_class",
+      "question": "Please select the class:",
+      "fallbackResponse": "Please select one class group from the options.",
+      "options": [
+        {
+          "label": "Nursery - UKG",
+          "value": "nursery_ukg",
+          "response": "Great. Please enter the Student's Name.",
+          "nextStepId": "admission_student_name",
+          "addTags": [
+            "class_nursery_ukg"
+          ],
+          "endFlow": false
+        },
+        {
+          "label": "Class 1 - 5",
+          "value": "class_1_5",
+          "response": "Great. Please enter the Student's Name.",
+          "nextStepId": "admission_student_name",
+          "addTags": [
+            "class_1_5"
+          ],
+          "endFlow": false
+        },
+        {
+          "label": "Class 6 - 8",
+          "value": "class_6_8",
+          "response": "Great. Please enter the Student's Name.",
+          "nextStepId": "admission_student_name",
+          "addTags": [
+            "class_6_8"
+          ],
+          "endFlow": false
+        },
+        {
+          "label": "Class 9 - 12",
+          "value": "class_9_12",
+          "response": "Great. Please enter the Student's Name.",
+          "nextStepId": "admission_student_name",
+          "addTags": [
+            "class_9_12"
+          ],
+          "endFlow": false
+        }
+      ]
+    },
+    {
+      "id": "admission_student_name",
+      "question": "Please enter the Student's Name.",
+      "inputType": "text",
+      "saveAnswerAs": "student_name",
+      "nextStepId": "admission_parent_name",
+      "fallbackResponse": "Please type the student name.",
+      "options": []
+    },
+    {
+      "id": "admission_parent_name",
+      "question": "Please enter Parent/Guardian Name.",
+      "inputType": "text",
+      "saveAnswerAs": "parent_name",
+      "nextStepId": "admission_mobile",
+      "fallbackResponse": "Please type the parent or guardian name.",
+      "options": []
+    },
+    {
+      "id": "admission_mobile",
+      "question": "Please enter Mobile Number.",
+      "inputType": "phone",
+      "saveAnswerAs": "mobile_number",
+      "nextStepId": "admission_done",
+      "fallbackResponse": "Please type a valid mobile number.",
+      "options": []
+    },
+    {
+      "id": "admission_done",
+      "question": "Thank you! Your admission inquiry has been successfully submitted.\n\nOur Admission Team will contact you shortly.\n\nBrochure PDF, school photos, and campus video can be shared by the team.",
+      "fallbackResponse": "Thank you. Our Admission Team will contact you shortly.",
+      "options": [
+        {
+          "label": "Back to Menu",
+          "value": "menu",
+          "response": "Opening main menu.",
+          "nextStepId": "welcome_menu",
+          "addTags": [
+            "admission_completed",
+            "hot_lead"
+          ],
+          "sendAdmissionInfo": true,
+          "setStatus": "interested",
+          "endFlow": false
+        }
+      ]
+    },
+    {
+      "id": "fee_mobile",
+      "question": "Please enter your Mobile Number.",
+      "inputType": "phone",
+      "saveAnswerAs": "mobile_number",
+      "nextStepId": "fee_done",
+      "fallbackResponse": "Please type a valid mobile number.",
+      "options": []
+    },
+    {
+      "id": "fee_done",
+      "question": "Thank you. Our Admission Team will share the latest fee structure with you shortly.",
+      "fallbackResponse": "Thank you. Our Admission Team will contact you shortly.",
+      "options": [
+        {
+          "label": "Back to Menu",
+          "value": "menu",
+          "response": "Opening main menu.",
+          "nextStepId": "welcome_menu",
+          "addTags": [
+            "fee_inquiry_completed"
+          ],
+          "sendAdmissionInfo": true,
+          "setStatus": "interested",
+          "endFlow": false
+        }
+      ]
+    },
+    {
+      "id": "transport_area",
+      "question": "Please enter your Area/Village Name.\n\nExamples: Kasrawad, Bhikangaon, Sanawad Road",
+      "inputType": "text",
+      "saveAnswerAs": "area_name",
+      "nextStepId": "transport_done",
+      "fallbackResponse": "Please type your area or village name.",
+      "options": []
+    },
+    {
+      "id": "transport_done",
+      "question": "Thank you. Our Transport Team will check route availability and contact you shortly.",
+      "fallbackResponse": "Thank you. Our Transport Team will contact you shortly.",
+      "options": [
+        {
+          "label": "Back to Menu",
+          "value": "menu",
+          "response": "Opening main menu.",
+          "nextStepId": "welcome_menu",
+          "addTags": [
+            "transport_inquiry_completed"
+          ],
+          "setStatus": "follow_up",
+          "endFlow": false
+        }
+      ]
+    },
+    {
+      "id": "team_department",
+      "question": "Please select a department:",
+      "fallbackResponse": "Please choose Admission Team, Director Office, or Principal Office.",
+      "options": [
+        {
+          "label": "Admission Team",
+          "value": "admission_team",
+          "response": "Please type your question for Admission Team.",
+          "nextStepId": "team_question",
+          "addTags": [
+            "department_admission"
+          ],
+          "endFlow": false
+        },
+        {
+          "label": "Director Office",
+          "value": "director_office",
+          "response": "Please type your question for Director Office.",
+          "nextStepId": "team_question",
+          "addTags": [
+            "department_director"
+          ],
+          "endFlow": false
+        },
+        {
+          "label": "Principal Office",
+          "value": "principal_office",
+          "response": "Please type your question for Principal Office.",
+          "nextStepId": "team_question",
+          "addTags": [
+            "department_principal"
+          ],
+          "endFlow": false
+        }
+      ]
+    },
+    {
+      "id": "team_question",
+      "question": "Please type your question.",
+      "inputType": "text",
+      "saveAnswerAs": "team_question",
+      "nextStepId": "team_done",
+      "fallbackResponse": "Please type your question.",
+      "options": []
+    },
+    {
+      "id": "team_done",
+      "question": "Thank you. Our team will respond as soon as possible.",
+      "fallbackResponse": "Thank you. Our team will respond as soon as possible.",
+      "options": [
+        {
+          "label": "Back to Menu",
+          "value": "menu",
+          "response": "Opening main menu.",
+          "nextStepId": "welcome_menu",
+          "addTags": [
+            "team_support_completed"
+          ],
+          "setStatus": "follow_up",
+          "endFlow": false
+        }
+      ]
+    }
+  ]
+}
