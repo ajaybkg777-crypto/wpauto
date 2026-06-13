@@ -88,7 +88,7 @@ export const whatsappAPI = {
 // Live chat APIs
 export const chatAPI = {
   getInbox: (params) => api.get('/chats/inbox', { params }),
-  getConversation: (leadId) => api.get(`/chats/${leadId}`),
+  getConversation: (leadId, params) => api.get(`/chats/${leadId}`, { params }),
   sendMessage: (leadId, data) => api.post(`/chats/${leadId}/send`, data)
 };
 
