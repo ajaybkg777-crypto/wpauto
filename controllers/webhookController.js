@@ -397,72 +397,6 @@ const formatFlowAnswers = (answers = {}) => {
     .join('\n');
 };
 
-const normalizeAnswerKey = (key = '') => String(key)
-  .trim()
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '_')
-  .replace(/^_|_$/g, '');
-
-const readFlowAnswer = (answers = {}, aliases = []) => {
-  const normalizedAliases = aliases.map(normalizeAnswerKey);
-  for (const [key, value] of Object.entries(answers || {})) {
-    if (normalizedAliases.includes(normalizeAnswerKey(key)) && value !== undefined && value !== null && value !== '') {
-      return Array.isArray(value) ? value.join(', ') : String(value).trim();
-    }
-  }
-  return '';
-};
-
-const normalizeSubmittedPhone = (value = '', fallback = '') => {
-  let digits = String(value || fallback || '').trim();
-  digits = digits.replace(/[^\d+]/g, '');
-  if (digits.startsWith('+')) digits = digits.slice(1);
-  digits = digits.replace(/\D/g, '');
-  if (digits.length === 10) {
-    digits = `${String(process.env.DEFAULT_COUNTRY_CODE || '91').replace(/\D/g, '')}${digits}`;
-  }
-  return digits || String(fallback || '').replace(/\D/g, '');
-};
-
-const buildFlowLeadPatch = (lead, answers = {}, flow = null) => {
-  const studentName = readFlowAnswer(answers, ['student_name', 'student name', 'name', 'student']);
-  const parentName = readFlowAnswer(answers, ['parent_name', 'parent name', 'guardian_name', 'guardian name', 'father_name', 'mother_name']);
-  const mobileNumber = readFlowAnswer(answers, ['mobile_number', 'mobile number', 'phone', 'phone_number', 'contact_number', 'whatsapp_number']);
-  const interestedClass = readFlowAnswer(answers, ['class', 'interested_class', 'class_group', 'grade', 'standard']);
-  const city = readFlowAnswer(answers, ['city', 'area', 'area_name', 'village']);
-  const email = readFlowAnswer(answers, ['email', 'email_id']);
-  const sourceLabel = flow?.title || flow?.name || 'WhatsApp Flow';
-  const noteLines = [
-    `WhatsApp Flow Submission${sourceLabel ? ` - ${sourceLabel}` : ''}`,
-    studentName ? `Student Name: ${studentName}` : '',
-    parentName ? `Parent/Guardian Name: ${parentName}` : '',
-    interestedClass ? `Interested Class: ${interestedClass}` : '',
-    mobileNumber ? `Submitted Mobile: ${mobileNumber}` : '',
-    city ? `Area/City: ${city}` : '',
-    email ? `Email: ${email}` : '',
-    formatFlowAnswers(answers)
-  ].filter(Boolean);
-
-  const displayName = parentName || studentName || lead.name;
-  const normalizedPhone = normalizeSubmittedPhone(mobileNumber, lead.phone);
-  const classTag = interestedClass
-    ? `class_${interestedClass.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')}`
-    : '';
-
-  return {
-    set: {
-      name: displayName,
-      phone: normalizedPhone,
-      ...(email ? { email: email.toLowerCase() } : {}),
-      status: 'interested',
-      notes: `${lead.notes ? `${lead.notes}\n\n` : ''}${noteLines.join('\n')}`,
-      lastMessage: `WhatsApp Flow submitted${studentName ? ` by ${studentName}` : ''}`,
-      lastMessageAt: new Date()
-    },
-    tags: ['flow-submitted', 'admission_inquiry', classTag, flow?.name].filter(Boolean)
-  };
-};
-
 const handleFlowSubmission = async (schoolId, lead, normalized, rawPayload) => {
   const answers = normalized.flowResponse || {};
   const flow = normalized.flowToken
@@ -481,18 +415,18 @@ const handleFlowSubmission = async (schoolId, lead, normalized, rawPayload) => {
     ...(shouldStoreRawPayloads() ? { rawPayload } : {})
   });
 
-  const leadPatch = buildFlowLeadPatch(lead, answers, flow);
   const update = {
     ...leadConversationUpdate({
       from: 'user',
       message: `WhatsApp Flow submitted${answerText ? `\n${answerText}` : ''}`,
       timestamp: new Date()
     }, {
-      ...leadPatch.set
+      status: 'interested',
+      notes: `${lead.notes ? `${lead.notes}\n\n` : ''}WhatsApp Flow Submission${flow?.title ? ` - ${flow.title}` : ''}\n${answerText}`
     }),
     $addToSet: {
       tags: {
-        $each: leadPatch.tags
+        $each: ['flow-submitted', flow?.name].filter(Boolean)
       }
     }
   };
