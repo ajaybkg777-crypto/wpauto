@@ -49,18 +49,21 @@ app.use(express.urlencoded({ extended: true, limit: process.env.JSON_BODY_LIMIT 
 // Enable CORS
 const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-  if (!allowedOrigins.length || allowedOrigins.includes(origin)) return true;
+  const normalizedOrigin = String(origin).trim().replace(/\/+$/, '');
+  if (!allowedOrigins.length || allowedOrigins.includes(normalizedOrigin)) return true;
 
   try {
-    const { hostname, protocol } = new URL(origin);
+    const { hostname, protocol } = new URL(normalizedOrigin);
     const isLocalhost = ['localhost', '127.0.0.1'].includes(hostname);
     const isCloudflareTunnel = protocol === 'https:' && hostname.endsWith('.trycloudflare.com');
-    return isLocalhost || isCloudflareTunnel;
+    const allowVercel = process.env.CORS_ALLOW_VERCEL !== 'false';
+    const isVercelApp = protocol === 'https:' && hostname.endsWith('.vercel.app');
+    return isLocalhost || isCloudflareTunnel || (allowVercel && isVercelApp);
   } catch (error) {
     return false;
   }
