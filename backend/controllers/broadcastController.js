@@ -85,6 +85,31 @@ const buildRecipients = (leads) => {
   }, []);
 };
 
+const buildCsvRecipients = (rows = []) => {
+  const seen = new Set();
+  return rows.reduce((items, row) => {
+    if (!row || typeof row !== 'object') return items;
+    const sourcePhone = row.Phone || row.phone || row.Mobile || row.mobile || row.Number || row.number;
+    const phone = normalizeWhatsAppPhone(sourcePhone);
+    if (!phone || seen.has(phone)) return items;
+    seen.add(phone);
+
+    const variables = Object.entries(row).reduce((data, [key, value]) => {
+      const cleanKey = String(key || '').trim();
+      if (!cleanKey || /^phone$/i.test(cleanKey)) return data;
+      data[cleanKey] = value == null ? '' : String(value).trim();
+      return data;
+    }, {});
+
+    items.push({
+      phone,
+      name: row.Name || row.name || variables.DriverName || 'Customer',
+      variables
+    });
+    return items;
+  }, []);
+};
+
 const broadcastEligibleLeadQuery = (schoolId, extra = {}) => ({
   schoolId,
   marketingOptOut: { $ne: true },
@@ -215,6 +240,28 @@ const buildRecipientTemplateValues = (template, recipient, school) => {
   return extractBodyVariables(template.body).map((_, index) => replacements[index] || '');
 };
 
+const resolveTemplateVariableValue = (value, recipient, school) => {
+  const rowVariables = recipient.variables && typeof recipient.variables === 'object' ? recipient.variables : {};
+  const context = {
+    lead_name: recipient.name || 'Customer',
+    name: recipient.name || 'Customer',
+    school_name: school?.name || 'our team',
+    phone: recipient.phone || '',
+    ...rowVariables
+  };
+  const normalizedContext = Object.entries(context).reduce((items, [key, item]) => {
+    items[String(key).toLowerCase()] = item == null ? '' : String(item);
+    return items;
+  }, {});
+
+  return String(value || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, key) => {
+    const exact = context[key];
+    if (exact !== undefined && exact !== null) return String(exact);
+    const normalized = normalizedContext[String(key).toLowerCase()];
+    return normalized !== undefined ? normalized : '';
+  });
+};
+
 const ensureMetaReady = async (schoolId) => {
   const [school, account] = await Promise.all([
     School.findById(schoolId),
@@ -301,7 +348,7 @@ exports.getBroadcast = async (req, res) => {
 // @access  Private
 exports.createBroadcast = async (req, res) => {
   try {
-    const { name, message, recipientType, recipientIds, templateId, templateVariables, scheduledAt, type, media, tagFilter } = req.body;
+    const { name, message, recipientType, recipientIds, templateId, templateVariables, scheduledAt, type, media, tagFilter, csvRecipients } = req.body;
 
     await ensureMetaReady(req.schoolId);
 
@@ -348,6 +395,8 @@ exports.createBroadcast = async (req, res) => {
         _id: { $in: recipientIds },
       })).select('name phone');
       recipients = buildRecipients(leads);
+    } else if (recipientType === 'csv') {
+      recipients = buildCsvRecipients(Array.isArray(csvRecipients) ? csvRecipients : []);
     }
 
     if (recipients.length === 0) {
@@ -681,10 +730,7 @@ const processBroadcast = async (broadcastId) => {
             ? {
                 language: template.language || 'en_US',
                 values: customValues.length
-                  ? customValues.map((value) => String(value)
-                    .replace(/\{\{\s*lead_name\s*\}\}/gi, recipient.name || 'Customer')
-                    .replace(/\{\{\s*school_name\s*\}\}/gi, school?.name || 'our team')
-                    .replace(/\{\{\s*phone\s*\}\}/gi, recipient.phone || ''))
+                  ? customValues.map((value) => resolveTemplateVariableValue(value, recipient, school))
                   : buildRecipientTemplateValues(template, recipient, school),
                 headerImageUrl: template.header?.type === 'image' ? mediaUrl : undefined
               }
