@@ -96,6 +96,9 @@ const csvRowsToObjects = (text = '') => {
   return { columns, recipients };
 };
 
+const getPhoneColumn = (columns = []) => columns.find((column) => /^(phone|mobile|number)$/i.test(column));
+const getVariableColumns = (columns = []) => columns.filter((column) => !/^(phone|mobile|number)$/i.test(column));
+
 const resolvePreviewVariableValue = (value = '', formData = {}) => {
   const sampleRow = formData.csvRecipients?.[0] || {};
   const context = {
@@ -280,8 +283,8 @@ export default function CreateBroadcast() {
     try {
       const text = await file.text();
       const { columns, recipients } = csvRowsToObjects(text.replace(/^\uFEFF/, ''));
-      if (!columns.some((column) => /^phone$/i.test(column))) {
-        toast.error('CSV me Phone column hona chahiye');
+      if (!getPhoneColumn(columns)) {
+        toast.error('CSV me Phone, Mobile, ya Number column hona chahiye');
         return;
       }
       if (!recipients.length) {
@@ -290,6 +293,14 @@ export default function CreateBroadcast() {
       }
       setFormData((current) => ({
         ...current,
+        templateVariables: variables.map((variable, index) => {
+          const currentValue = current.templateVariables[index] || '';
+          const defaultValue = getDefaultVariableValue(variable);
+          const shouldAutoMap = !currentValue || currentValue === defaultValue || /^Sample\s+/i.test(currentValue);
+          if (!shouldAutoMap) return currentValue;
+          const column = getVariableColumns(columns)[index];
+          return column ? `{{${column}}}` : currentValue || defaultValue;
+        }),
         recipientType: 'csv',
         csvRecipients: recipients,
         csvColumns: columns,
@@ -480,7 +491,10 @@ export default function CreateBroadcast() {
                 variables={variables}
                 variablesComplete={variablesComplete}
                 values={formData.templateVariables}
+                formData={formData}
+                csvInputRef={csvInputRef}
                 onUpdate={updateVariable}
+                onCsvUpload={uploadCsvAudience}
                 onBack={() => goToStep(1)}
                 onNext={() => goToStep(3)}
               />
@@ -598,8 +612,19 @@ export default function CreateBroadcast() {
         .bb-danger { border: 1px solid #fecdd3; background: #fff1f2; color: #be123c; }
         .bb-nav { margin-top: 18px; display: flex; justify-content: space-between; gap: 10px; }
         .bb-variable-list { display: grid; gap: 12px; }
-        .bb-variable-row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center; border: 1px solid #dbe4ef; border-radius: 16px; padding: 12px; background: #f8fafc; }
+        .bb-csv-map { margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid #dbe4ef; border-radius: 18px; padding: 14px; background: linear-gradient(135deg,#f8fafc,#ffffff); }
+        .bb-csv-map span, .bb-column-bank span, .bb-sample-value span { display: block; color: #64748b; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+        .bb-csv-map b { display: block; margin-top: 4px; color: #0f2b63; font-size: 14px; }
+        .bb-csv-map p { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45; }
+        .bb-column-bank { margin-bottom: 14px; border: 1px solid #dbe4ef; border-radius: 16px; padding: 12px; background: #f8fafc; }
+        .bb-column-bank div, .bb-map-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+        .bb-column-bank code { border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; color: #2b5893; padding: 6px 9px; font-size: 12px; font-weight: 900; }
+        .bb-variable-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) 160px; gap: 12px; align-items: start; border: 1px solid #dbe4ef; border-radius: 16px; padding: 12px; background: #f8fafc; }
         .bb-variable-row code { color: #2b5893; font-weight: 900; }
+        .bb-map-actions button { border: 1px solid #dbe4ef; border-radius: 999px; background: #fff; color: #0f2b63; padding: 5px 8px; font-size: 11px; font-weight: 900; cursor: pointer; }
+        .bb-map-actions button:hover { border-color: #25D366; background: #ecfdf5; color: #047857; }
+        .bb-sample-value { min-width: 0; border: 1px dashed #cbd5e1; border-radius: 14px; padding: 10px; background: #fff; }
+        .bb-sample-value b { display: block; margin-top: 4px; color: #0f2b63; font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
         .bb-audience-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
         .bb-audience-card { border: 1px solid #dbe4ef; border-radius: 18px; background: #fff; padding: 15px; cursor: pointer; }
         .bb-audience-card.is-selected { border-color: #25D366; background: #ecfdf5; }
@@ -733,10 +758,36 @@ function TemplateStep({ formData, templates, selectedTemplate, needsImageHeader,
   );
 }
 
-function VariableStep({ variables, variablesComplete, values, onUpdate, onBack, onNext }) {
+function VariableStep({ variables, variablesComplete, values, formData, csvInputRef, onUpdate, onCsvUpload, onBack, onNext }) {
+  const variableColumns = getVariableColumns(formData.csvColumns);
+  const sampleRow = formData.csvRecipients?.[0] || {};
+  const samplePhone = sampleRow[getPhoneColumn(formData.csvColumns)] || sampleRow.Phone || sampleRow.phone || sampleRow.Mobile || sampleRow.mobile || '-';
+
   return (
     <div>
       <SectionHead title="Dynamic Variables" copy="Personalize Meta template placeholders before targeting your audience." />
+      <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={onCsvUpload} className="hidden" />
+      <div className="bb-csv-map">
+        <div>
+          <span>CSV Variable Source</span>
+          <b>{formData.csvFilename || 'Upload CSV to map row-wise variables'}</b>
+          <p>{formData.csvRecipients.length ? `${formData.csvRecipients.length} recipients loaded. First number: ${samplePhone}` : 'CSV columns can be used as {{ColumnName}} in template variables.'}</p>
+        </div>
+        <button type="button" className="bb-soft" onClick={() => csvInputRef.current?.click()}>
+          <DocumentArrowUpIcon className="h-5 w-5" />
+          {formData.csvRecipients.length ? 'Change CSV' : 'Upload CSV'}
+        </button>
+      </div>
+      {!!variableColumns.length && (
+        <div className="bb-column-bank">
+          <span>Available columns</span>
+          <div>
+            {variableColumns.map((column) => (
+              <code key={column}>{`{{${column}}}`}</code>
+            ))}
+          </div>
+        </div>
+      )}
       {variables.length === 0 ? (
         <div className="bb-info"><span>Variables</span><b>This template has no dynamic body variables.</b></div>
       ) : (
@@ -747,7 +798,20 @@ function VariableStep({ variables, variablesComplete, values, onUpdate, onBack, 
               <label className="bb-field">
                 <span>Value</span>
                 <input value={values[index] || ''} onChange={(event) => onUpdate(index, event.target.value)} placeholder={getDefaultVariableValue(variable)} />
+                {!!variableColumns.length && (
+                  <div className="bb-map-actions">
+                    {variableColumns.map((column) => (
+                      <button type="button" key={column} onClick={() => onUpdate(index, `{{${column}}}`)}>
+                        {column}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </label>
+              <div className="bb-sample-value">
+                <span>First row</span>
+                <b>{resolvePreviewVariableValue(values[index] || getDefaultVariableValue(variable), formData) || '-'}</b>
+              </div>
             </div>
           ))}
         </div>
