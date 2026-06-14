@@ -100,6 +100,7 @@ app.use('/api/', limiter);
 
 // Mount routers
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/chats', chatRoutes);
