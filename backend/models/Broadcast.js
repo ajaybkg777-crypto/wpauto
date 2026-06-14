@@ -40,10 +40,6 @@ const broadcastSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Lead'
     },
-    variables: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {}
-    },
     status: {
       type: String,
       enum: ['pending', 'sent', 'delivered', 'read', 'failed'],

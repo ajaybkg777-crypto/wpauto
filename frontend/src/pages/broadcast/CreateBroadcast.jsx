@@ -14,7 +14,6 @@ import {
   PhotoIcon,
   ShieldCheckIcon,
   TrashIcon,
-  DocumentArrowUpIcon,
   UsersIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
@@ -29,9 +28,6 @@ const initialForm = {
   statusFilter: 'interested',
   tagFilter: '',
   selectedLeads: [],
-  csvRecipients: [],
-  csvColumns: [],
-  csvFilename: '',
   scheduledAt: '',
   type: 'marketing'
 };
@@ -49,77 +45,9 @@ const toLocalDateTimeValue = (date) => {
   return local.toISOString().slice(0, 16);
 };
 
-const parseCsvText = (text = '') => {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let quoted = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    const next = text[index + 1];
-
-    if (char === '"' && quoted && next === '"') {
-      cell += '"';
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === ',' && !quoted) {
-      row.push(cell);
-      cell = '';
-    } else if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && next === '\n') index += 1;
-      row.push(cell);
-      if (row.some((value) => String(value || '').trim())) rows.push(row);
-      row = [];
-      cell = '';
-    } else {
-      cell += char;
-    }
-  }
-
-  row.push(cell);
-  if (row.some((value) => String(value || '').trim())) rows.push(row);
-  return rows;
-};
-
-const csvRowsToObjects = (text = '') => {
-  const rows = parseCsvText(text);
-  if (rows.length < 2) return { columns: [], recipients: [] };
-  const columns = rows[0].map((column) => String(column || '').trim()).filter(Boolean);
-  const recipients = rows.slice(1).map((row) => {
-    return columns.reduce((item, column, index) => {
-      item[column] = String(row[index] || '').trim();
-      return item;
-    }, {});
-  }).filter((row) => String(row.Phone || row.phone || row.Mobile || row.mobile || '').trim());
-  return { columns, recipients };
-};
-
-const resolvePreviewVariableValue = (value = '', formData = {}) => {
-  const sampleRow = formData.csvRecipients?.[0] || {};
-  const context = {
-    lead_name: sampleRow.Name || sampleRow.name || 'Sample Parent',
-    name: sampleRow.Name || sampleRow.name || 'Sample Parent',
-    school_name: 'BKG International School',
-    phone: sampleRow.Phone || sampleRow.phone || sampleRow.Mobile || sampleRow.mobile || '919826763101',
-    ...sampleRow
-  };
-  const normalizedContext = Object.entries(context).reduce((items, [key, item]) => {
-    items[String(key).toLowerCase()] = item == null ? '' : String(item);
-    return items;
-  }, {});
-
-  return String(value || '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, key) => {
-    if (context[key] !== undefined && context[key] !== null) return String(context[key]);
-    return normalizedContext[String(key).toLowerCase()] ?? match;
-  });
-};
-
 export default function CreateBroadcast() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
-  const csvInputRef = useRef(null);
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -181,15 +109,14 @@ export default function CreateBroadcast() {
   const renderedMessage = useMemo(() => {
     let text = selectedTemplate?.body || formData.message || 'Select a Meta-approved template to preview your WhatsApp broadcast.';
     variables.forEach((variable, index) => {
-      const value = resolvePreviewVariableValue(formData.templateVariables[index] || `Sample ${variable}`, formData);
+      const value = formData.templateVariables[index] || `Sample ${variable}`;
       text = text.replace(new RegExp(`{{\\s*${variable}\\s*}}`, 'g'), value);
     });
     return text;
-  }, [formData, selectedTemplate?.body, variables]);
+  }, [formData.message, formData.templateVariables, selectedTemplate?.body, variables]);
 
   const audienceLabel = useMemo(() => {
     if (formData.recipientType === 'selected') return `${formData.selectedLeads.length} selected`;
-    if (formData.recipientType === 'csv') return formData.csvRecipients.length ? `${formData.csvRecipients.length} CSV contacts` : 'CSV required';
     if (formData.recipientType === 'all') return 'All contacts';
     if (formData.recipientType === 'status') return `Status: ${formData.statusFilter}`;
     if (formData.recipientType === 'tag') return formData.tagFilter ? `Tag: ${formData.tagFilter}` : 'Tag required';
@@ -273,36 +200,6 @@ export default function CreateBroadcast() {
     setFormData((current) => ({ ...current, media: null }));
   };
 
-  const uploadCsvAudience = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const { columns, recipients } = csvRowsToObjects(text.replace(/^\uFEFF/, ''));
-      if (!columns.some((column) => /^phone$/i.test(column))) {
-        toast.error('CSV me Phone column hona chahiye');
-        return;
-      }
-      if (!recipients.length) {
-        toast.error('CSV file has no valid phone rows');
-        return;
-      }
-      setFormData((current) => ({
-        ...current,
-        recipientType: 'csv',
-        csvRecipients: recipients,
-        csvColumns: columns,
-        csvFilename: file.name
-      }));
-      toast.success(`${recipients.length} CSV contacts loaded`);
-    } catch (error) {
-      toast.error('CSV read nahi ho payi');
-    } finally {
-      event.target.value = '';
-    }
-  };
-
   const handleLeadSelect = (leadId) => {
     setFormData((current) => ({
       ...current,
@@ -330,11 +227,6 @@ export default function CreateBroadcast() {
 
     if (formData.recipientType === 'selected' && formData.selectedLeads.length === 0) {
       if (showToast) toast.error('Select at least one contact');
-      return false;
-    }
-
-    if (formData.recipientType === 'csv' && formData.csvRecipients.length === 0) {
-      if (showToast) toast.error('Upload CSV audience first');
       return false;
     }
 
@@ -390,7 +282,6 @@ export default function CreateBroadcast() {
         statusFilter: formData.statusFilter,
         tagFilter: formData.tagFilter,
         recipientIds: formData.selectedLeads,
-        csvRecipients: formData.recipientType === 'csv' ? formData.csvRecipients : [],
         scheduledAt: formData.scheduledAt || null,
         type: formData.type
       });
@@ -490,10 +381,8 @@ export default function CreateBroadcast() {
               <AudienceStep
                 formData={formData}
                 leads={leads}
-                csvInputRef={csvInputRef}
                 onChange={handleChange}
                 onLeadSelect={handleLeadSelect}
-                onCsvUpload={uploadCsvAudience}
                 onBack={() => goToStep(2)}
                 onNext={() => goToStep(4)}
               />
@@ -600,7 +489,7 @@ export default function CreateBroadcast() {
         .bb-variable-list { display: grid; gap: 12px; }
         .bb-variable-row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: center; border: 1px solid #dbe4ef; border-radius: 16px; padding: 12px; background: #f8fafc; }
         .bb-variable-row code { color: #2b5893; font-weight: 900; }
-        .bb-audience-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+        .bb-audience-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
         .bb-audience-card { border: 1px solid #dbe4ef; border-radius: 18px; background: #fff; padding: 15px; cursor: pointer; }
         .bb-audience-card.is-selected { border-color: #25D366; background: #ecfdf5; }
         .bb-audience-card b { color: #0f2b63; }
@@ -757,11 +646,10 @@ function VariableStep({ variables, variablesComplete, values, onUpdate, onBack, 
   );
 }
 
-function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, onCsvUpload, onBack, onNext }) {
+function AudienceStep({ formData, leads, onChange, onLeadSelect, onBack, onNext }) {
   const types = [
     { value: 'status', label: 'By Status', detail: 'Best for lead follow-ups' },
     { value: 'selected', label: 'Selected', detail: 'Choose exact contacts' },
-    { value: 'csv', label: 'CSV Upload', detail: 'Use row-wise variables' },
     { value: 'tag', label: 'By Tag', detail: 'Target imported segments' },
     { value: 'all', label: 'All Contacts', detail: 'Full database blast' }
   ];
@@ -795,35 +683,6 @@ function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, on
             <span>Tag</span>
             <input name="tagFilter" value={formData.tagFilter} onChange={onChange} placeholder="parent, admission, grade_10" />
           </label>
-        )}
-        {formData.recipientType === 'csv' && (
-          <div>
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={onCsvUpload} className="hidden" />
-            <div className="bb-image-uploader">
-              <div className="bb-image-preview">
-                <DocumentArrowUpIcon className="h-9 w-9" />
-              </div>
-              <div className="flex-1">
-                <p className="font-bold text-[#0f2b63]">{formData.csvFilename || 'Upload CSV audience'}</p>
-                <p className="mt-1 text-sm text-slate-500">Phone column se recipient banega. Baaki columns variables ke liye available rahenge.</p>
-                {!!formData.csvColumns.length && (
-                  <p className="mt-1 text-xs font-bold text-emerald-700">
-                    {formData.csvRecipients.length} rows: {formData.csvColumns.join(', ')}
-                  </p>
-                )}
-              </div>
-              <button type="button" className="bb-action" onClick={() => csvInputRef.current?.click()}>
-                <DocumentArrowUpIcon className="h-5 w-5" />
-                {formData.csvRecipients.length ? 'Change CSV' : 'Upload CSV'}
-              </button>
-            </div>
-            {!!formData.csvColumns.length && (
-              <div className="bb-info mt-4">
-                <span>Use In Variables</span>
-                <b>{formData.csvColumns.filter((column) => !/^phone$/i.test(column)).map((column) => `{{${column}}}`).join('  ') || 'No variable columns found'}</b>
-              </div>
-            )}
-          </div>
         )}
         {formData.recipientType === 'selected' && (
           <div className="bb-leads">
