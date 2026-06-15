@@ -710,6 +710,7 @@ const processBroadcast = async (broadcastId) => {
     const delayBetweenBatches = readPositiveInt(process.env.BROADCAST_BATCH_DELAY_MS, 250, 10000);
 
     const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
+    let claimedTotal = 0;
 
     for (let i = 0; i < pendingRecipients.length; i += batchSize) {
       const batch = pendingRecipients.slice(i, i + batchSize);
@@ -717,6 +718,27 @@ const processBroadcast = async (broadcastId) => {
       const messageWrites = [];
       const batchResults = await runWithConcurrency(batch, sendConcurrency, async (recipient) => {
         try {
+          const claim = await Broadcast.updateOne(
+            {
+              _id: broadcast._id,
+              recipients: {
+                $elemMatch: {
+                  phone: recipient.phone,
+                  status: 'pending'
+                }
+              }
+            },
+            {
+              $set: {
+                'recipients.$.status': 'processing'
+              }
+            }
+          );
+
+          if (!claim.modifiedCount) {
+            return { skipped: true };
+          }
+
           const normalizedPhone = normalizeWhatsAppPhone(recipient.phone);
           if (!normalizedPhone) {
             throw new Error('Invalid WhatsApp phone number. Use country code format, for example 919999999999.');
@@ -796,9 +818,15 @@ const processBroadcast = async (broadcastId) => {
         }
       });
 
+      const claimedResults = batchResults.filter((result) => result && !result.skipped);
+      claimedTotal += claimedResults.length;
+      if (!claimedResults.length) {
+        continue;
+      }
+
       broadcast.currentBatch = Math.floor(i / batchSize) + 1;
-      broadcast.sentCount += batchResults.filter((result) => result?.success).length;
-      broadcast.failedCount += batchResults.filter((result) => result && !result.success).length;
+      broadcast.sentCount += claimedResults.filter((result) => result?.success).length;
+      broadcast.failedCount += claimedResults.filter((result) => !result.success).length;
 
       if (messageWrites.length) {
         await Message.bulkWrite(messageWrites, { ordered: false });
@@ -812,12 +840,21 @@ const processBroadcast = async (broadcastId) => {
       }
     }
 
+    if (!claimedTotal) {
+      return;
+    }
+
     // Update final status
     broadcast.sentCount = broadcast.recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length;
     broadcast.deliveredCount = broadcast.recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length;
     broadcast.readCount = broadcast.recipients.filter((item) => item.status === 'read').length;
     broadcast.failedCount = broadcast.recipients.filter((item) => item.status === 'failed').length;
-    broadcast.status = 'completed';
+    broadcast.recipients.forEach((recipient) => {
+      if (recipient.status === 'processing') {
+        recipient.status = 'pending';
+      }
+    });
+    broadcast.status = broadcast.recipients.some((item) => item.status === 'pending') ? 'processing' : 'completed';
     broadcast.completedAt = new Date();
     await broadcast.save();
 

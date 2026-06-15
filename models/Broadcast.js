@@ -46,7 +46,7 @@ const broadcastSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['pending', 'sent', 'delivered', 'read', 'failed'],
+      enum: ['pending', 'processing', 'sent', 'delivered', 'read', 'failed'],
       default: 'pending'
     },
     messageId: String,
