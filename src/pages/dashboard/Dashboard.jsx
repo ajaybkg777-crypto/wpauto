@@ -7,7 +7,6 @@ import {
   ArrowTrendingUpIcon,
   BoltIcon,
   ChartBarIcon,
-  ChatBubbleLeftRightIcon,
   CheckCircleIcon,
   DocumentTextIcon,
   EnvelopeIcon,
@@ -55,6 +54,7 @@ export default function Dashboard() {
   const sent = stats.analytics?.totalMessagesSent || 0;
   const delivered = stats.analytics?.totalMessagesDelivered || 0;
   const read = stats.analytics?.totalMessagesRead || 0;
+  const failedMessages = stats.analytics?.totalMessagesFailed || stats.messageLedger?.failed || stats.broadcasts?.failedRecipients || 0;
   const customerReplies = stats.messageLedger?.inbound || 0;
   const safePercent = (value, total) => {
     if (!total || total <= 0) return 0;
@@ -78,13 +78,14 @@ export default function Dashboard() {
     { label: 'Sent', value: sent, color: 'bg-primary' },
     { label: 'Delivered', value: delivered, color: 'bg-emerald-500' },
     { label: 'Read', value: read, color: 'bg-teal-500' },
+    { label: 'Failed', value: failedMessages, color: 'bg-rose-500' },
     { label: 'Replies', value: customerReplies, color: 'bg-amber-400' }
   ];
   const broadcastRows = [
     { label: 'Scheduled', value: stats.broadcasts?.scheduled || 0, color: 'bg-amber-400' },
     { label: 'Processing', value: stats.broadcasts?.processing || 0, color: 'bg-teal-500' },
     { label: 'Completed', value: stats.broadcasts?.completed || 0, color: 'bg-emerald-500' },
-    { label: 'Failed', value: stats.broadcasts?.failed || 0, color: 'bg-rose-500' }
+    { label: 'Failed Recipients', value: stats.broadcasts?.failedRecipients || 0, color: 'bg-rose-500' }
   ];
 
   const fetchStats = async ({ background = false } = {}) => {
@@ -400,7 +401,7 @@ export default function Dashboard() {
           <div className="mb-5 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-gray-950">Message Performance</h2>
-              <p className="text-sm text-gray-600">Sent, delivered, read and customer replies.</p>
+              <p className="text-sm text-gray-600">Live DB totals for sent, delivered, read, failed and customer replies.</p>
             </div>
             <Link to="/analytics" className="inline-flex items-center gap-2 text-sm font-bold text-primary">
               <ChartBarIcon className="h-5 w-5" />
@@ -411,7 +412,7 @@ export default function Dashboard() {
             <MessageMetric label="Sent" value={sent} icon={EnvelopeIcon} />
             <MessageMetric label="Delivered" value={delivered} icon={CheckCircleIcon} />
             <MessageMetric label="Read" value={read} icon={ArrowTrendingUpIcon} />
-            <MessageMetric label="Customer Replies" value={customerReplies} icon={ChatBubbleLeftRightIcon} />
+            <MessageMetric label="Failed" value={failedMessages} icon={ExclamationTriangleIcon} />
           </div>
           <div className="mt-5 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
@@ -459,7 +460,7 @@ export default function Dashboard() {
 
           <div className="mt-5 grid grid-cols-2 gap-3">
             <SmallMetric label="Scheduled" value={stats.broadcasts?.scheduled || 0} />
-            <SmallMetric label="Failed" value={stats.broadcasts?.failed || 0} />
+            <SmallMetric label="Failed Recipients" value={stats.broadcasts?.failedRecipients || 0} />
           </div>
           <div className="mt-5 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
             <p className="mb-4 text-sm font-bold text-gray-950">Broadcast Queue</p>
