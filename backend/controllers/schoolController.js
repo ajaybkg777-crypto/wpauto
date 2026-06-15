@@ -1,4 +1,5 @@
 const School = require('../models/School');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Lead = require('../models/Lead');
 const Broadcast = require('../models/Broadcast');
@@ -17,6 +18,14 @@ const getAssetUrl = (req, filePath) => {
   const baseUrl = process.env.APP_BASE_URL || `${req.protocol}://${req.get('host')}`;
   return `${baseUrl}${filePath}`;
 };
+
+const toObjectId = (value) => {
+  if (value instanceof mongoose.Types.ObjectId) return value;
+  if (mongoose.Types.ObjectId.isValid(value)) return new mongoose.Types.ObjectId(value);
+  return value;
+};
+
+const firstAggregate = (items, fallback = {}) => items?.[0] || fallback;
 
 // @desc    Get school profile
 // @route   GET /api/schools/profile
@@ -216,6 +225,7 @@ exports.uploadAdmissionMedia = async (req, res) => {
 exports.getStats = async (req, res) => {
   try {
     const schoolId = req.schoolId;
+    const schoolObjectId = toObjectId(schoolId);
 
     // Get counts
     const [
@@ -235,7 +245,9 @@ exports.getStats = async (req, res) => {
       totalAutomations,
       activeAutomations,
       inboundMessages,
-      outboundMessages
+      outboundMessages,
+      messageStatusRows,
+      broadcastRecipientRows
     ] = await Promise.all([
       Lead.countDocuments({ schoolId }),
       Lead.countDocuments({ schoolId, status: 'interested' }),
@@ -253,7 +265,90 @@ exports.getStats = async (req, res) => {
       ChatbotRule.countDocuments({ schoolId }),
       ChatbotRule.countDocuments({ schoolId, isActive: true }),
       Message.countDocuments({ schoolId, direction: 'inbound' }),
-      Message.countDocuments({ schoolId, direction: 'outbound' })
+      Message.countDocuments({ schoolId, direction: 'outbound' }),
+      Message.aggregate([
+        { $match: { schoolId: schoolObjectId } },
+        {
+          $group: {
+            _id: null,
+            inbound: {
+              $sum: { $cond: [{ $eq: ['$direction', 'inbound'] }, 1, 0] }
+            },
+            outbound: {
+              $sum: { $cond: [{ $eq: ['$direction', 'outbound'] }, 1, 0] }
+            },
+            sent: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$direction', 'outbound'] },
+                      { $in: ['$status', ['sent', 'delivered', 'read']] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            delivered: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$direction', 'outbound'] },
+                      { $in: ['$status', ['delivered', 'read']] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            read: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$direction', 'outbound'] },
+                      { $eq: ['$status', 'read'] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            },
+            failed: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$direction', 'outbound'] },
+                      { $eq: ['$status', 'failed'] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]),
+      Broadcast.aggregate([
+        { $match: { schoolId: schoolObjectId } },
+        {
+          $group: {
+            _id: null,
+            totalRecipients: { $sum: '$totalRecipients' },
+            sent: { $sum: '$sentCount' },
+            delivered: { $sum: '$deliveredCount' },
+            read: { $sum: '$readCount' },
+            failed: { $sum: '$failedCount' }
+          }
+        }
+      ])
     ]);
 
     // Get school for analytics and the latest Meta WhatsApp account snapshot.
@@ -261,6 +356,30 @@ exports.getStats = async (req, res) => {
       School.findById(schoolId),
       syncMetaAccountForSchool(schoolId)
     ]);
+
+    const messageStatus = firstAggregate(messageStatusRows, {
+      inbound: inboundMessages,
+      outbound: outboundMessages,
+      sent: 0,
+      delivered: 0,
+      read: 0,
+      failed: 0
+    });
+    const broadcastRecipients = firstAggregate(broadcastRecipientRows, {
+      totalRecipients: 0,
+      sent: 0,
+      delivered: 0,
+      read: 0,
+      failed: 0
+    });
+    const liveAnalytics = {
+      ...(school.analytics?.toObject ? school.analytics.toObject() : school.analytics || {}),
+      totalMessagesSent: Math.max(Number(messageStatus.sent) || 0, Number(broadcastRecipients.sent) || 0),
+      totalMessagesDelivered: Math.max(Number(messageStatus.delivered) || 0, Number(broadcastRecipients.delivered) || 0),
+      totalMessagesRead: Math.max(Number(messageStatus.read) || 0, Number(broadcastRecipients.read) || 0),
+      totalMessagesFailed: Math.max(Number(messageStatus.failed) || 0, Number(broadcastRecipients.failed) || 0),
+      source: 'live_mongo'
+    };
 
     res.set('Cache-Control', 'no-store');
     res.status(200).json({
@@ -286,7 +405,12 @@ exports.getStats = async (req, res) => {
           completed: completedBroadcasts,
           scheduled: scheduledBroadcasts,
           processing: processingBroadcasts,
-          failed: failedBroadcasts
+          failed: failedBroadcasts,
+          recipients: Number(broadcastRecipients.totalRecipients) || 0,
+          sentRecipients: Number(broadcastRecipients.sent) || 0,
+          deliveredRecipients: Number(broadcastRecipients.delivered) || 0,
+          readRecipients: Number(broadcastRecipients.read) || 0,
+          failedRecipients: Number(broadcastRecipients.failed) || 0
         },
         templates: {
           total: totalTemplates,
@@ -298,10 +422,14 @@ exports.getStats = async (req, res) => {
           total: totalAutomations,
           active: activeAutomations
         },
-        analytics: school.analytics,
+        analytics: liveAnalytics,
         messageLedger: {
-          inbound: inboundMessages,
-          outbound: outboundMessages
+          inbound: Number(messageStatus.inbound) || inboundMessages,
+          outbound: Number(messageStatus.outbound) || outboundMessages,
+          sent: Number(messageStatus.sent) || 0,
+          delivered: Number(messageStatus.delivered) || 0,
+          read: Number(messageStatus.read) || 0,
+          failed: Number(messageStatus.failed) || 0
         },
         whatsapp,
         subscription: school.subscription,
