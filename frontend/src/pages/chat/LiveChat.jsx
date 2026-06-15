@@ -201,9 +201,9 @@ export default function LiveChat() {
           min-height: calc(100dvh - 96px);
         }
         .live-chat-shell {
-          height: calc(100dvh - 220px);
-          min-height: 520px;
-          max-height: calc(100dvh - 160px);
+          height: calc(100dvh - 188px);
+          min-height: 650px;
+          max-height: calc(100dvh - 132px);
         }
         .chat-scroll-area {
           scrollbar-gutter: stable;
@@ -215,8 +215,8 @@ export default function LiveChat() {
             min-height: 0;
           }
           .live-chat-shell main {
-            height: min(640px, calc(100dvh - 220px));
-            min-height: 460px;
+            height: min(700px, calc(100dvh - 190px));
+            min-height: 520px;
           }
         }
       `}</style>
@@ -267,8 +267,8 @@ function MessageList({ messages = [], compact = false }) {
 
 function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit }) {
   return (
-    <div className="mx-auto mt-4 w-[280px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
-      <div className="flex h-[570px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
+    <div className="mx-auto mt-4 w-[270px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
+      <div className="flex h-[600px] max-h-[calc(100dvh-270px)] min-h-[520px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
         <div className="flex h-[50px] shrink-0 items-center gap-2 bg-[#075e54] px-3 text-white">
           <Avatar name={lead?.name || 'W'} small />
           <div className="min-w-0">
