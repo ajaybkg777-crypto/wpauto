@@ -6,10 +6,10 @@ const WhatsAppFlowSubmission = require('../models/WhatsAppFlowSubmission');
 const daysAgo = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
 const getRetentionConfig = () => ({
-  messagesDays: Number(process.env.RETENTION_MESSAGES_DAYS || 90),
-  broadcastDays: Number(process.env.RETENTION_BROADCAST_DAYS || 180),
-  flowSubmissionDays: Number(process.env.RETENTION_FLOW_SUBMISSIONS_DAYS || 365),
-  conversationDays: Number(process.env.RETENTION_LEAD_CONVERSATION_DAYS || 90)
+  messagesDays: Number(process.env.RETENTION_MESSAGES_DAYS || 7),
+  broadcastDays: Number(process.env.RETENTION_BROADCAST_DAYS || 30),
+  flowSubmissionDays: Number(process.env.RETENTION_FLOW_SUBMISSIONS_DAYS || 30),
+  conversationDays: Number(process.env.RETENTION_LEAD_CONVERSATION_DAYS || 7)
 });
 
 const runDataRetentionCleanup = async () => {
