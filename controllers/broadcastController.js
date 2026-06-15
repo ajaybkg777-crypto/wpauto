@@ -9,6 +9,7 @@ const { uploadFileToCloudinary } = require('../services/cloudinaryService');
 const { decryptSecret } = require('../utils/tokenVault');
 const { compactMessageRecord } = require('../utils/storagePolicy');
 const activeBroadcasts = new Set();
+const DELIVERED_STATUSES = ['sent', 'delivered', 'read'];
 
 const getPublicAssetUrl = (assetPath) => {
   if (!assetPath) return '';
@@ -45,6 +46,75 @@ const runWithConcurrency = async (items, concurrency, worker) => {
 
   await Promise.all(runners);
   return results;
+};
+
+const countRecipientStatuses = (recipients = []) => ({
+  sentCount: recipients.filter((item) => DELIVERED_STATUSES.includes(item.status)).length,
+  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length,
+  readCount: recipients.filter((item) => item.status === 'read').length,
+  failedCount: recipients.filter((item) => item.status === 'failed').length
+});
+
+const refreshBroadcastCounters = async (broadcastId, options = {}) => {
+  const broadcast = await Broadcast.findById(broadcastId);
+  if (!broadcast) return null;
+
+  const counts = countRecipientStatuses(broadcast.recipients);
+  const update = { ...counts };
+
+  if (options.currentBatch !== undefined) update.currentBatch = options.currentBatch;
+  if (options.finalize) {
+    const hasPending = broadcast.recipients.some((item) => item.status === 'pending' || item.status === 'processing');
+    update.status = hasPending ? 'processing' : 'completed';
+    update.completedAt = new Date();
+  }
+
+  await Broadcast.updateOne({ _id: broadcastId }, { $set: update });
+  return { ...broadcast.toObject(), ...update };
+};
+
+const reconcileBroadcastWithMessageLedger = async (broadcast) => {
+  const ids = (broadcast.recipients || [])
+    .map((recipient) => recipient.messageId)
+    .filter(Boolean);
+
+  if (!ids.length) return broadcast;
+
+  const messages = await Message.find({ metaMessageId: { $in: ids } })
+    .select('metaMessageId status deliveredAt readAt failedAt')
+    .lean();
+  const messageById = new Map(messages.map((message) => [message.metaMessageId, message]));
+  let changed = false;
+
+  broadcast.recipients.forEach((recipient) => {
+    const message = messageById.get(recipient.messageId);
+    if (!message) return;
+
+    if (message.status && recipient.status !== message.status) {
+      recipient.status = message.status;
+      changed = true;
+    }
+    ['deliveredAt', 'readAt', 'failedAt'].forEach((field) => {
+      if (message[field] && !recipient[field]) {
+        recipient[field] = message[field];
+        changed = true;
+      }
+    });
+  });
+
+  if (!changed) return broadcast;
+
+  const counts = countRecipientStatuses(broadcast.recipients);
+  await Broadcast.updateOne(
+    { _id: broadcast._id },
+    {
+      $set: {
+        recipients: broadcast.recipients,
+        ...counts
+      }
+    }
+  );
+  return Object.assign(broadcast, counts);
 };
 
 const extractBodyVariables = (body = '') => {
@@ -319,7 +389,7 @@ exports.getBroadcasts = async (req, res) => {
 // @access  Private
 exports.getBroadcast = async (req, res) => {
   try {
-    const broadcast = await Broadcast.findOne({ 
+    let broadcast = await Broadcast.findOne({
       _id: req.params.id, 
       schoolId: req.schoolId 
     }).populate('createdBy', 'name');
@@ -330,6 +400,8 @@ exports.getBroadcast = async (req, res) => {
         message: 'Broadcast not found'
       });
     }
+
+    broadcast = await reconcileBroadcastWithMessageLedger(broadcast);
 
     res.status(200).json({
       success: true,
@@ -763,14 +835,26 @@ const processBroadcast = async (broadcastId) => {
               ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
               : await whatsappService.sendMessage(normalizedPhone, broadcast.message);
 
-          const recipientIndex = broadcast.recipients.findIndex(
-            r => r.phone === recipient.phone
-          );
-
           if (result.success) {
-            broadcast.recipients[recipientIndex].status = 'sent';
-            broadcast.recipients[recipientIndex].messageId = result.messageId;
-            broadcast.recipients[recipientIndex].sentAt = new Date();
+            const sentAt = new Date();
+            await Broadcast.updateOne(
+              {
+                _id: broadcast._id,
+                recipients: {
+                  $elemMatch: {
+                    phone: recipient.phone,
+                    status: 'processing'
+                  }
+                }
+              },
+              {
+                $set: {
+                  'recipients.$.status': 'sent',
+                  'recipients.$.messageId': result.messageId,
+                  'recipients.$.sentAt': sentAt
+                }
+              }
+            );
 
             messageWrites.push({
               updateOne: {
@@ -787,7 +871,7 @@ const processBroadcast = async (broadcastId) => {
                     messageType: templateName ? 'template' : mediaUrl ? 'image' : 'text',
                     metaMessageId: result.messageId,
                     status: 'sent',
-                    sentAt: new Date(),
+                    sentAt,
                     rawPayload: {
                       source: 'broadcast',
                       broadcastId: broadcast._id,
@@ -803,17 +887,44 @@ const processBroadcast = async (broadcastId) => {
             return { success: true };
           }
 
-          broadcast.recipients[recipientIndex].status = 'failed';
-          broadcast.recipients[recipientIndex].error = result.error;
-          broadcast.recipients[recipientIndex].failedAt = new Date();
+          await Broadcast.updateOne(
+            {
+              _id: broadcast._id,
+              recipients: {
+                $elemMatch: {
+                  phone: recipient.phone,
+                  status: 'processing'
+                }
+              }
+            },
+            {
+              $set: {
+                'recipients.$.status': 'failed',
+                'recipients.$.error': result.error,
+                'recipients.$.failedAt': new Date()
+              }
+            }
+          );
           return { success: false };
         } catch (error) {
-          const recipientIndex = broadcast.recipients.findIndex(
-            r => r.phone === recipient.phone
+          await Broadcast.updateOne(
+            {
+              _id: broadcast._id,
+              recipients: {
+                $elemMatch: {
+                  phone: recipient.phone,
+                  status: 'processing'
+                }
+              }
+            },
+            {
+              $set: {
+                'recipients.$.status': 'failed',
+                'recipients.$.error': error.message,
+                'recipients.$.failedAt': new Date()
+              }
+            }
           );
-          broadcast.recipients[recipientIndex].status = 'failed';
-          broadcast.recipients[recipientIndex].error = error.message;
-          broadcast.recipients[recipientIndex].failedAt = new Date();
           return { success: false };
         }
       });
@@ -824,15 +935,13 @@ const processBroadcast = async (broadcastId) => {
         continue;
       }
 
-      broadcast.currentBatch = Math.floor(i / batchSize) + 1;
-      broadcast.sentCount += claimedResults.filter((result) => result?.success).length;
-      broadcast.failedCount += claimedResults.filter((result) => !result.success).length;
-
       if (messageWrites.length) {
         await Message.bulkWrite(messageWrites, { ordered: false });
       }
 
-      await broadcast.save();
+      await refreshBroadcastCounters(broadcast._id, {
+        currentBatch: Math.floor(i / batchSize) + 1
+      });
 
       // Delay between batches
       if (i + batchSize < pendingRecipients.length) {
@@ -844,24 +953,17 @@ const processBroadcast = async (broadcastId) => {
       return;
     }
 
-    // Update final status
-    broadcast.sentCount = broadcast.recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length;
-    broadcast.deliveredCount = broadcast.recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length;
-    broadcast.readCount = broadcast.recipients.filter((item) => item.status === 'read').length;
-    broadcast.failedCount = broadcast.recipients.filter((item) => item.status === 'failed').length;
-    broadcast.recipients.forEach((recipient) => {
-      if (recipient.status === 'processing') {
-        recipient.status = 'pending';
-      }
-    });
-    broadcast.status = broadcast.recipients.some((item) => item.status === 'pending') ? 'processing' : 'completed';
-    broadcast.completedAt = new Date();
-    await broadcast.save();
+    await Broadcast.updateOne(
+      { _id: broadcast._id },
+      { $set: { 'recipients.$[recipient].status': 'pending' } },
+      { arrayFilters: [{ 'recipient.status': 'processing' }] }
+    );
+    const finalBroadcast = await refreshBroadcastCounters(broadcast._id, { finalize: true });
 
     // Update school analytics
     await School.findByIdAndUpdate(broadcast.schoolId, {
       $inc: {
-        'analytics.totalMessagesSent': broadcast.sentCount
+        'analytics.totalMessagesSent': finalBroadcast?.sentCount || 0
       }
     });
 

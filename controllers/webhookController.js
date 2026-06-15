@@ -63,6 +63,26 @@ const webhookLog = (...args) => {
 };
 
 const readFirst = (...values) => values.find((value) => value !== undefined && value !== null && value !== '');
+const STATUS_RANK = {
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4
+};
+
+const shouldApplyStatus = (currentStatus, nextStatus) => {
+  if (!currentStatus) return true;
+  if (nextStatus === 'failed') return !['delivered', 'read'].includes(currentStatus);
+  if (currentStatus === 'failed') return false;
+  return (STATUS_RANK[nextStatus] || 0) >= (STATUS_RANK[currentStatus] || 0);
+};
+
+const countBroadcastRecipients = (recipients = []) => ({
+  sentCount: recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length,
+  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length,
+  readCount: recipients.filter((item) => item.status === 'read').length,
+  failedCount: recipients.filter((item) => item.status === 'failed').length
+});
 
 const parseJsonSafely = (value) => {
   if (!value) return null;
@@ -807,6 +827,8 @@ const handleIncomingMessage = async (payload) => {
 // Handle status updates (delivered, read)
 const handleStatusUpdate = async (payload) => {
   const { messageId, status } = payload;
+  if (!STATUS_RANK[status]) return;
+
   const updateField = status === 'read' ? 'readAt'
     : status === 'delivered' ? 'deliveredAt'
       : status === 'failed' ? 'failedAt'
@@ -814,37 +836,47 @@ const handleStatusUpdate = async (payload) => {
   const statusTime = new Date();
 
   if (messageId) {
-    await Message.findOneAndUpdate(
-      { metaMessageId: messageId },
-      {
-        status,
-        ...(updateField ? { [updateField]: statusTime } : {})
-      }
-    );
+    const message = await Message.findOne({ metaMessageId: messageId });
+    if (message && shouldApplyStatus(message.status, status)) {
+      message.status = status;
+      if (updateField) message[updateField] = statusTime;
+      if (status === 'read') message.deliveredAt = message.deliveredAt || statusTime;
+      await message.save();
+    }
 
     const broadcast = await Broadcast.findOne({ 'recipients.messageId': messageId });
     if (broadcast) {
       const recipient = broadcast.recipients.find((item) => item.messageId === messageId);
-      if (recipient) {
-        recipient.status = status;
-        if (status === 'delivered') recipient.deliveredAt = statusTime;
+      if (recipient && shouldApplyStatus(recipient.status, status)) {
+        const recipientSet = {
+          'recipients.$.status': status
+        };
+
+        if (status === 'delivered') recipientSet['recipients.$.deliveredAt'] = statusTime;
         if (status === 'read') {
-          recipient.readAt = statusTime;
-          recipient.deliveredAt = recipient.deliveredAt || statusTime;
+          recipientSet['recipients.$.readAt'] = statusTime;
+          if (!recipient.deliveredAt) recipientSet['recipients.$.deliveredAt'] = statusTime;
         }
         if (status === 'failed') {
           const metaError = payload.errors?.[0] || {};
-          recipient.error = metaError.title || metaError.message || 'Meta delivery failed';
-          recipient.errorCode = metaError.code ? String(metaError.code) : undefined;
-          recipient.errorDetails = metaError.error_data?.details || metaError.details || undefined;
-          recipient.failedAt = statusTime;
+          recipientSet['recipients.$.error'] = metaError.title || metaError.message || 'Meta delivery failed';
+          recipientSet['recipients.$.errorCode'] = metaError.code ? String(metaError.code) : undefined;
+          recipientSet['recipients.$.errorDetails'] = metaError.error_data?.details || metaError.details || undefined;
+          recipientSet['recipients.$.failedAt'] = statusTime;
         }
 
-        broadcast.sentCount = broadcast.recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length;
-        broadcast.deliveredCount = broadcast.recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length;
-        broadcast.readCount = broadcast.recipients.filter((item) => item.status === 'read').length;
-        broadcast.failedCount = broadcast.recipients.filter((item) => item.status === 'failed').length;
-        await broadcast.save();
+        await Broadcast.updateOne(
+          { _id: broadcast._id, 'recipients.messageId': messageId },
+          { $set: recipientSet }
+        );
+
+        const freshBroadcast = await Broadcast.findById(broadcast._id).select('recipients');
+        if (freshBroadcast) {
+          await Broadcast.updateOne(
+            { _id: broadcast._id },
+            { $set: countBroadcastRecipients(freshBroadcast.recipients) }
+          );
+        }
       }
     }
   }
