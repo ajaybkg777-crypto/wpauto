@@ -118,7 +118,7 @@ export default function LiveChat() {
   const metaReady = Boolean(whatsapp.isConnected);
 
   return (
-    <div className="space-y-5">
+    <div className="flex min-h-[calc(100vh-96px)] flex-col gap-5 overflow-hidden">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">WhatsApp Inbox</p>
@@ -137,8 +137,8 @@ export default function LiveChat() {
         </div>
       </header>
 
-      <section className="grid min-h-[680px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[300px_minmax(0,1fr)_330px]">
-        <aside className="flex min-h-[620px] flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
+      <section className="grid h-[calc(100vh-220px)] min-h-[620px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[300px_minmax(0,1fr)_330px]">
+        <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
           <div className="border-b border-slate-200 p-4">
             <p className="text-sm font-bold text-slate-950">Conversations</p>
             <label className="relative mt-3 block">
@@ -146,7 +146,7 @@ export default function LiveChat() {
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name or phone..." className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
             </label>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {loading ? (
               <div className="flex h-44 items-center justify-center"><Spinner /></div>
             ) : inbox.length === 0 ? (
@@ -167,11 +167,11 @@ export default function LiveChat() {
           </div>
         </aside>
 
-        <main className="flex min-h-[680px] min-w-0 flex-col bg-[#efeae2]">
+        <main className="flex min-h-0 min-w-0 flex-col bg-[#efeae2]">
           {selected ? (
             <>
               <ChatHeader lead={selected} />
-              <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">
+              <div ref={timelineRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
                 <DateChip />
                 <MessageList messages={conversation.timeline} />
               </div>
@@ -182,7 +182,7 @@ export default function LiveChat() {
           )}
         </main>
 
-        <aside className="hidden border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
+        <aside className="hidden min-h-0 overflow-hidden border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
           <p className="mt-1 text-sm font-bold text-slate-950">WhatsApp conversation</p>
           <PhonePreview
