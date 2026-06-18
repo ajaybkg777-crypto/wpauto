@@ -424,7 +424,13 @@ export default function CreateBroadcast() {
 
   return (
     <div className="broadcast-builder">
-      <div className="bb-hero">
+      <div
+        className="bb-hero"
+        style={{
+          background: 'radial-gradient(circle at 88% 10%, rgba(255,218,121,.18), transparent 28%), linear-gradient(135deg,#075E54 0%,#128C7E 100%)',
+          boxShadow: '0 26px 70px rgba(7,94,84,.22)'
+        }}
+      >
         <button type="button" onClick={() => navigate('/broadcast')} className="bb-back" aria-label="Back to broadcasts">
           <ArrowLeftIcon className="h-5 w-5" />
         </button>
