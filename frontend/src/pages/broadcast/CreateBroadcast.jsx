@@ -562,7 +562,7 @@ export default function CreateBroadcast() {
         .broadcast-builder { min-height: 100vh; color: #0f172a; }
         .broadcast-builder, .bb-layout, .bb-main, .bb-panel { max-width: 100%; min-width: 0; }
         .broadcast-builder { overflow-x: hidden; }
-        .bb-hero { position: relative; overflow: hidden; border-radius: 24px; padding: 28px; display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: start; background: radial-gradient(circle at 88% 10%, rgba(255,218,121,.18), transparent 28%), linear-gradient(135deg,#075E54 0%,#128C7E 100%); color: white; box-shadow: 0 26px 70px rgba(7,94,84,.22); }
+        .bb-hero { position: relative; overflow: hidden; border-radius: 24px; padding: 28px; display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: start; background: radial-gradient(circle at 88% 10%, rgba(255,218,121,.18), transparent 28%), linear-gradient(135deg,#075E54 0%,#128C7E 100%) !important; color: white; box-shadow: 0 26px 70px rgba(7,94,84,.22) !important; }
         .bb-hero::after { content: ""; position: absolute; right: -110px; bottom: -150px; width: 360px; height: 360px; border-radius: 999px; background: radial-gradient(circle, rgba(255,218,121,.38), rgba(37,211,102,.16), transparent 68%); }
         .bb-back, .bb-ghost, .bb-gold, .bb-action, .bb-soft, .bb-danger, .bb-template-card, .bb-audience-card, .bb-step, .bb-cta-btn { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease; }
         .bb-back { width: 44px; height: 44px; border: 1px solid rgba(255,255,255,.16); border-radius: 14px; background: rgba(255,255,255,.1); color: white; display: grid; place-items: center; }
