@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Broadcast = require('../models/Broadcast');
 const Lead = require('../models/Lead');
 const Message = require('../models/Message');
@@ -10,6 +11,11 @@ const { decryptSecret } = require('../utils/tokenVault');
 const { compactMessageRecord } = require('../utils/storagePolicy');
 const activeBroadcasts = new Set();
 const DELIVERED_STATUSES = ['sent', 'delivered', 'read'];
+
+const toObjectId = (value) => {
+  if (value instanceof mongoose.Types.ObjectId) return value;
+  return mongoose.Types.ObjectId.isValid(value) ? new mongoose.Types.ObjectId(value) : value;
+};
 
 const getPublicAssetUrl = (assetPath) => {
   if (!assetPath) return '';
@@ -359,7 +365,7 @@ exports.getBroadcasts = async (req, res) => {
 
     const skip = (page - 1) * limit;
     
-    const [broadcasts, total] = await Promise.all([
+    let [broadcasts, total] = await Promise.all([
       Broadcast.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -367,6 +373,7 @@ exports.getBroadcasts = async (req, res) => {
         .populate('createdBy', 'name'),
       Broadcast.countDocuments(query)
     ]);
+    broadcasts = await Promise.all(broadcasts.map((broadcast) => reconcileBroadcastWithMessageLedger(broadcast)));
 
     res.status(200).json({
       success: true,
@@ -984,19 +991,57 @@ const processBroadcast = async (broadcastId) => {
 // @access  Private
 exports.getBroadcastStats = async (req, res) => {
   try {
-    const stats = await Broadcast.aggregate([
-      { $match: { schoolId: req.schoolId } },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalRecipients: { $sum: '$totalRecipients' },
-          totalSent: { $sum: '$sentCount' },
-          totalDelivered: { $sum: '$deliveredCount' },
-          totalRead: { $sum: '$readCount' },
-          totalFailed: { $sum: '$failedCount' }
+    const schoolId = toObjectId(req.schoolId);
+    const [statusStats, recipientStats] = await Promise.all([
+      Broadcast.aggregate([
+        { $match: { schoolId } },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
         }
-      }
+      ]),
+      Broadcast.aggregate([
+        { $match: { schoolId } },
+        { $unwind: { path: '$recipients', preserveNullAndEmptyArrays: false } },
+        {
+          $group: {
+            _id: null,
+            totalRecipients: { $sum: 1 },
+            totalSent: {
+              $sum: {
+                $cond: [{ $in: ['$recipients.status', ['sent', 'delivered', 'read']] }, 1, 0]
+              }
+            },
+            totalDelivered: {
+              $sum: {
+                $cond: [{ $in: ['$recipients.status', ['delivered', 'read']] }, 1, 0]
+              }
+            },
+            totalRead: {
+              $sum: {
+                $cond: [{ $eq: ['$recipients.status', 'read'] }, 1, 0]
+              }
+            },
+            totalFailed: {
+              $sum: {
+                $cond: [{ $eq: ['$recipients.status', 'failed'] }, 1, 0]
+              }
+            },
+            totalPending: {
+              $sum: {
+                $cond: [{ $eq: ['$recipients.status', 'pending'] }, 1, 0]
+              }
+            },
+            totalProcessing: {
+              $sum: {
+                $cond: [{ $eq: ['$recipients.status', 'processing'] }, 1, 0]
+              }
+            }
+          }
+        }
+      ])
     ]);
 
     const formattedStats = {
@@ -1010,17 +1055,17 @@ exports.getBroadcastStats = async (req, res) => {
       totalSent: 0,
       totalDelivered: 0,
       totalRead: 0,
-      totalFailed: 0
+      totalFailed: 0,
+      totalPending: 0,
+      totalProcessing: 0
     };
 
-    stats.forEach(stat => {
+    statusStats.forEach(stat => {
       formattedStats[stat._id] = stat.count;
-      formattedStats.totalRecipients += stat.totalRecipients || 0;
-      formattedStats.totalSent += stat.totalSent || 0;
-      formattedStats.totalDelivered += stat.totalDelivered || 0;
-      formattedStats.totalRead += stat.totalRead || 0;
-      formattedStats.totalFailed += stat.totalFailed || 0;
     });
+
+    Object.assign(formattedStats, recipientStats[0] || {});
+    delete formattedStats._id;
 
     res.status(200).json({
       success: true,
