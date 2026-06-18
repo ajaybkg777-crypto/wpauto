@@ -278,8 +278,8 @@ npm run dev
 ```
 
 ### Test Credentials
-- **Email**: admin@waauto.com
-- **Password**: admin123
+- Configure `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your private environment.
+- Do not commit real login credentials to the repository.
 
 ---
 

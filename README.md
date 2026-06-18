@@ -156,7 +156,7 @@ Default local admin comes from your backend `.env`:
 
 ```env
 ADMIN_EMAIL=admin@waauto.com
-ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD=replace-with-a-strong-private-password
 ```
 
 ## Useful Commands
@@ -179,4 +179,3 @@ Ignored by git:
 - logs
 - `backend/uploads`
 - `frontend/dist`
-

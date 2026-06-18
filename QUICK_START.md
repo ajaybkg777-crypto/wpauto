@@ -13,7 +13,7 @@ npm install
 ```
 PORT=5000
 NODE_ENV=development
-MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/yourdb
+MONGODB_URI=your-mongodb-atlas-connection-string
 JWT_SECRET=your-super-secret-jwt-key-change-this
 JWT_EXPIRE=7d
 
@@ -53,8 +53,8 @@ npm run dev
 ### 3. Access Application
 
 - **URL:** http://localhost:5173
-- **Admin Login:** admin@waauto.com / admin123
-- **School Owner:** school@example.com / password123
+- **Admin Login:** use the private `ADMIN_EMAIL` and `ADMIN_PASSWORD` from your local `.env`
+- **School Owner:** create a test owner with a private password
 
 ---
 
@@ -159,7 +159,7 @@ curl -X POST http://localhost:5000/api/auth/register \
   -d '{
     "name": "Test School",
     "email": "test@school.com",
-    "password": "password123",
+    "password": "replace-with-a-private-test-password",
     "schoolName": "Test School Name"
   }'
 ```

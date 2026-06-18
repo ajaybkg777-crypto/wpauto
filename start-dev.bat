@@ -51,7 +51,7 @@ echo 📍 Frontend: http://localhost:5173
 echo.
 echo 🔑 Test Credentials:
 echo    Email: admin@waauto.com
-echo    Password: admin123
+echo    Password: use ADMIN_PASSWORD from backend\.env
 echo.
 echo 📚 Documentation:
 echo    • README.md - Full documentation

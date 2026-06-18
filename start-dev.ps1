@@ -62,7 +62,7 @@ Write-Host "📍 Frontend: http://localhost:5173" -ForegroundColor $success
 Write-Host ""
 Write-Host "🔑 Test Credentials:" -ForegroundColor $info
 Write-Host "   Email: admin@waauto.com" -ForegroundColor $info
-Write-Host "   Password: admin123" -ForegroundColor $info
+Write-Host "   Password: use ADMIN_PASSWORD from backend\.env" -ForegroundColor $info
 Write-Host ""
 Write-Host "📚 Documentation:" -ForegroundColor $info
 Write-Host "   • README.md - Full documentation" -ForegroundColor $info

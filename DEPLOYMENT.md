@@ -46,7 +46,7 @@ Add these in Render Dashboard → Environment:
 ```
 PORT=5000
 NODE_ENV=production
-MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/waauto
+MONGODB_URI=your-mongodb-atlas-connection-string
 JWT_SECRET=generate-strong-random-key-here
 JWT_EXPIRE=30d
 
@@ -188,11 +188,11 @@ Both services handle SSL automatically.
 
 3. **Get Connection String**:
    - Click **Connect** → **Connect your application**
-   - Copy URI: `mongodb+srv://user:password@cluster.mongodb.net/waauto`
+   - Copy your private MongoDB Atlas connection string
 
 4. **Update `.env`**:
    ```
-   MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/waauto
+   MONGODB_URI=your-mongodb-atlas-connection-string
    ```
 
 ### Local MongoDB (Development Only)
