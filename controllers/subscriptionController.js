@@ -3,11 +3,22 @@ const Subscription = require('../models/Subscription');
 const School = require('../models/School');
 const Razorpay = require('razorpay');
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+let razorpayClient;
+
+const getRazorpayClient = () => {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+    throw new Error('Razorpay keys are not configured');
+  }
+
+  if (!razorpayClient) {
+    razorpayClient = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET
+    });
+  }
+
+  return razorpayClient;
+};
 
 const SCHOOL_PLAN = {
   name: 'basic',
@@ -119,7 +130,7 @@ exports.createOrder = async (req, res) => {
           amount,
           currency: 'INR'
         }
-      : await razorpay.orders.create({
+      : await getRazorpayClient().orders.create({
           amount,
           currency: 'INR',
           receipt: `receipt_${Date.now()}`,
@@ -163,6 +174,13 @@ exports.verifyPayment = async (req, res) => {
     // Verify signature
     const crypto = require('crypto');
     const body = razorpayOrderId + '|' + razorpayPaymentId;
+    if (!process.env.RAZORPAY_KEY_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'Razorpay keys are not configured'
+      });
+    }
+
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
       .update(body)
