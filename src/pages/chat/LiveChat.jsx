@@ -1,12 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   ArrowPathIcon,
   ChatBubbleLeftRightIcon,
   CheckIcon,
+  ClockIcon,
+  EnvelopeIcon,
+  ExclamationTriangleIcon,
+  FunnelIcon,
   MagnifyingGlassIcon,
   PaperAirplaneIcon,
   PhoneIcon,
+  TagIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { chatAPI, whatsappAPI } from '../../services/api';
 
@@ -18,16 +24,28 @@ const formatListTime = (value) => value
   ? new Date(value).toLocaleDateString([], { day: '2-digit', month: 'short' })
   : '';
 
+const statusOptions = [
+  { label: 'All', value: '' },
+  { label: 'New', value: 'new' },
+  { label: 'Interested', value: 'interested' },
+  { label: 'Pending', value: 'pending' },
+  { label: 'Follow-up', value: 'follow_up' },
+  { label: 'Converted', value: 'converted' }
+];
+
 export default function LiveChat() {
   const [inbox, setInbox] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [conversation, setConversation] = useState({ lead: null, timeline: [] });
   const [whatsapp, setWhatsapp] = useState({});
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [inboxMeta, setInboxMeta] = useState({ total: 0, windowDays: 7 });
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const timelineRef = useRef(null);
   const phoneTimelineRef = useRef(null);
 
@@ -35,13 +53,21 @@ export default function LiveChat() {
     if (!quiet) setLoading(true);
     try {
       const [inboxResponse, whatsappResponse] = await Promise.all([
-        chatAPI.getInbox({ search, limit: 100, days: 7 }),
+        chatAPI.getInbox({ search, status: statusFilter, limit: 100, days: 7 }),
         whatsappAPI.getConfig()
       ]);
       const rows = inboxResponse.data.data || [];
       setInbox(rows);
+      setInboxMeta({
+        total: inboxResponse.data.total ?? rows.length,
+        windowDays: inboxResponse.data.windowDays || 7
+      });
       setWhatsapp(whatsappResponse.data.data || {});
-      setSelectedId((current) => current || rows[0]?._id || '');
+      setSelectedId((current) => {
+        if (current && rows.some((row) => row._id === current)) return current;
+        return rows[0]?._id || '';
+      });
+      setLastUpdated(new Date());
     } catch (error) {
       if (!quiet) toast.error(error.response?.data?.message || 'Could not load live chat');
     } finally {
@@ -51,7 +77,10 @@ export default function LiveChat() {
   };
 
   const fetchConversation = async (leadId, { quiet = false } = {}) => {
-    if (!leadId) return;
+    if (!leadId) {
+      setConversation({ lead: null, timeline: [] });
+      return;
+    }
     try {
       const response = await chatAPI.getConversation(leadId, { days: 7 });
       setConversation(response.data.data || { lead: null, timeline: [] });
@@ -63,7 +92,7 @@ export default function LiveChat() {
   useEffect(() => {
     const timer = window.setTimeout(() => fetchInbox(), 250);
     return () => window.clearTimeout(timer);
-  }, [search]);
+  }, [search, statusFilter]);
 
   useEffect(() => {
     fetchConversation(selectedId);
@@ -76,7 +105,7 @@ export default function LiveChat() {
       if (selectedId) void fetchConversation(selectedId, { quiet: true });
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [selectedId, search]);
+  }, [selectedId, search, statusFilter]);
 
   useEffect(() => {
     for (const ref of [timelineRef, phoneTimelineRef]) {
@@ -116,14 +145,32 @@ export default function LiveChat() {
 
   const selected = conversation.lead;
   const metaReady = Boolean(whatsapp.isConnected);
+  const timeline = conversation.timeline || [];
+  const lastInbound = useMemo(() => [...timeline]
+    .reverse()
+    .find((item) => item.from === 'user' && item.timestamp), [timeline]);
+  const lastInboundAt = lastInbound?.timestamp ? new Date(lastInbound.timestamp) : null;
+  const canReply = Boolean(lastInboundAt && Date.now() - lastInboundAt.getTime() <= 24 * 60 * 60 * 1000);
+  const disabledReason = !selected
+    ? 'Select a conversation'
+    : !metaReady
+      ? 'Connect Meta WhatsApp before replying'
+      : !canReply
+        ? 'Free-text replies need a customer message in the last 24 hours'
+        : '';
+  const inboxSummary = useMemo(() => {
+    const needsReply = inbox.filter((item) => item.lastMessage?.from !== 'school').length;
+    const outbound = inbox.length - needsReply;
+    return { outbound, needsReply };
+  }, [inbox]);
 
   return (
     <div className="live-chat-page flex flex-col gap-5">
-      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+      <header className="live-chat-header flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">WhatsApp Inbox</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-950">Live Chat Center</h1>
-          <p className="mt-1 text-sm font-medium text-slate-500">Handle customer replies from the last 7 days and send WhatsApp messages from one workspace.</p>
+          <p className="mt-1 text-sm font-medium text-slate-500">Handle customer replies, inspect lead context, and send WhatsApp messages from one workspace.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <span className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-bold ${metaReady ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
@@ -132,19 +179,46 @@ export default function LiveChat() {
           </span>
           <button type="button" onClick={handleRefresh} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700">
             <ArrowPathIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            {lastUpdated ? `Updated ${formatRelative(lastUpdated)}` : 'Refresh'}
           </button>
         </div>
       </header>
 
-      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[300px_minmax(0,1fr)_330px]">
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <MetricCard label="Conversations" value={inboxMeta.total} detail={`Last ${inboxMeta.windowDays} days`} icon={ChatBubbleLeftRightIcon} />
+        <MetricCard label="Needs Reply" value={inboxSummary.needsReply} detail="Latest message from customer" icon={EnvelopeIcon} tone="emerald" />
+        <MetricCard label="Agent Replies" value={inboxSummary.outbound} detail="Latest message from workspace" icon={PaperAirplaneIcon} tone="slate" />
+        <MetricCard label="Reply Window" value={canReply ? 'Open' : 'Limited'} detail={lastInboundAt ? formatRelative(lastInboundAt) : 'No inbound message'} icon={ClockIcon} tone={canReply ? 'emerald' : 'amber'} />
+      </section>
+
+      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[330px_minmax(0,1fr)_360px]">
         <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
           <div className="border-b border-slate-200 p-4">
-            <p className="text-sm font-bold text-slate-950">Conversations</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-bold text-slate-950">Conversations</p>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">{inbox.length} shown</span>
+            </div>
             <label className="relative mt-3 block">
               <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name or phone..." className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm font-semibold outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
             </label>
+            <div className="mt-3 flex items-center gap-2 overflow-x-auto pb-1">
+              <FunnelIcon className="h-4 w-4 shrink-0 text-slate-400" />
+              {statusOptions.map((option) => (
+                <button
+                  key={option.value || 'all'}
+                  type="button"
+                  onClick={() => setStatusFilter(option.value)}
+                  className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold transition ${
+                    statusFilter === option.value
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:text-emerald-700'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {loading ? (
@@ -152,7 +226,7 @@ export default function LiveChat() {
             ) : inbox.length === 0 ? (
               <EmptyState title="No conversations" copy="Customer replies will appear here." />
             ) : inbox.map((item) => (
-              <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50' : 'hover:bg-white'}`}>
+              <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-100' : 'hover:bg-white'}`}>
                 <Avatar name={item.name} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
@@ -160,7 +234,11 @@ export default function LiveChat() {
                     <small className="shrink-0 text-[10px] font-bold text-slate-400">{formatListTime(item.lastMessage?.at)}</small>
                   </span>
                   <span className="mt-1 block truncate text-xs font-medium text-slate-500">{item.lastMessage?.text || item.phone}</span>
-                  <span className="mt-2 inline-flex rounded-full bg-white px-2 py-0.5 text-[10px] font-bold capitalize text-slate-500 ring-1 ring-slate-200">{String(item.status || 'new').replace('_', ' ')}</span>
+                  <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <StatusBadge status={item.status} />
+                    {item.messageCount ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">{item.messageCount} msgs</span> : null}
+                    {item.lastMessage?.from !== 'school' ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">reply</span> : null}
+                  </span>
                 </span>
               </button>
             ))}
@@ -171,28 +249,38 @@ export default function LiveChat() {
           {selected ? (
             <>
               <ChatHeader lead={selected} />
-              <div ref={timelineRef} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-scroll overscroll-contain p-4 sm:p-6">
+              {disabledReason && (
+                <div className="flex items-start gap-2 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+                  <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{disabledReason}</span>
+                </div>
+              )}
+              <div ref={timelineRef} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
                 <DateChip />
-                <MessageList messages={conversation.timeline} />
+                <MessageList messages={timeline} />
               </div>
-              <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} />
+              <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} disabledReason={disabledReason} />
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center p-8"><EmptyState title="Choose a conversation" copy="Select a WhatsApp contact to start chatting." /></div>
           )}
         </main>
 
-        <aside className="hidden h-full min-h-0 overflow-hidden border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
-          <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
-          <p className="mt-1 text-sm font-bold text-slate-950">WhatsApp conversation</p>
+        <aside className="hidden h-full min-h-0 overflow-y-auto border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
+          <ContactPanel lead={selected} lastInboundAt={lastInboundAt} canReply={canReply} metaReady={metaReady} />
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
+            <p className="mt-1 text-sm font-bold text-slate-950">WhatsApp conversation</p>
+          </div>
           <PhonePreview
             lead={selected}
-            messages={conversation.timeline}
+            messages={timeline}
             scrollRef={phoneTimelineRef}
             message={message}
             setMessage={setMessage}
             sending={sending}
             onSubmit={handleSend}
+            disabledReason={disabledReason}
           />
         </aside>
       </section>
@@ -200,10 +288,24 @@ export default function LiveChat() {
         .live-chat-page {
           min-height: calc(100dvh - 96px);
         }
+        .live-chat-header {
+          border: 1px solid rgba(226,232,240,.95);
+          border-radius: 24px;
+          background: rgba(255,255,255,.88);
+          box-shadow: 0 18px 42px rgba(15,23,42,.06);
+          padding: 18px;
+          backdrop-filter: blur(16px);
+        }
         .live-chat-shell {
-          height: calc(100dvh - 188px);
-          min-height: 650px;
-          max-height: calc(100dvh - 132px);
+          height: clamp(500px, calc(100dvh - 286px), 760px);
+          min-height: 0;
+        }
+        .live-chat-shell main {
+          background:
+            linear-gradient(45deg, rgba(7,94,84,.035) 25%, transparent 25%),
+            linear-gradient(-45deg, rgba(7,94,84,.035) 25%, transparent 25%),
+            #efeae2;
+          background-size: 18px 18px;
         }
         .chat-scroll-area {
           scrollbar-gutter: stable;
@@ -215,8 +317,8 @@ export default function LiveChat() {
             min-height: 0;
           }
           .live-chat-shell main {
-            height: min(700px, calc(100dvh - 190px));
-            min-height: 520px;
+            height: clamp(430px, calc(100dvh - 180px), 680px);
+            min-height: 0;
           }
         }
       `}</style>
@@ -239,11 +341,17 @@ function ChatHeader({ lead }) {
   );
 }
 
-function Composer({ message, setMessage, sending, onSubmit }) {
+function Composer({ message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
-    <form onSubmit={onSubmit} className="flex shrink-0 gap-3 border-t border-black/5 bg-white/95 p-3">
-      <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Type a WhatsApp message..." className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold outline-none focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100" />
-      <button type="submit" disabled={!message.trim() || sending} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#075e54] text-white transition hover:bg-[#064e45] disabled:cursor-not-allowed disabled:opacity-40" title="Send message">
+    <form onSubmit={onSubmit} className="sticky bottom-0 z-10 flex shrink-0 gap-3 border-t border-black/5 bg-white/95 p-3 shadow-[0_-10px_24px_rgba(15,23,42,.08)] backdrop-blur">
+      <input
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+        disabled={Boolean(disabledReason)}
+        placeholder={disabledReason || 'Type a WhatsApp message...'}
+        className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+      />
+      <button type="submit" disabled={Boolean(disabledReason) || !message.trim() || sending} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#075e54] text-white transition hover:bg-[#064e45] disabled:cursor-not-allowed disabled:opacity-40" title="Send message">
         {sending ? <Spinner small /> : <PaperAirplaneIcon className="h-5 w-5" />}
       </button>
     </form>
@@ -258,14 +366,19 @@ function MessageList({ messages = [], compact = false }) {
         <p className="whitespace-pre-wrap break-words leading-5">{item.message}</p>
         <p className={`mt-1 flex items-center justify-end gap-1 text-right font-semibold text-slate-400 ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
           {formatTime(item.timestamp)}
-          {item.from === 'school' && <CheckIcon className="h-3 w-3 text-emerald-600" />}
+          {item.from === 'school' && (
+            <>
+              <CheckIcon className={`h-3 w-3 ${item.status === 'failed' ? 'text-rose-500' : 'text-emerald-600'}`} />
+              {!compact && <span className="capitalize">{String(item.status || 'sent')}</span>}
+            </>
+          )}
         </p>
       </div>
     </div>
   ));
 }
 
-function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit }) {
+function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
     <div className="mx-auto mt-4 w-[260px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
       <div className="flex h-[560px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
@@ -284,13 +397,13 @@ function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending,
           <input
             value={message}
             onChange={(event) => setMessage(event.target.value)}
-            disabled={!lead}
+            disabled={!lead || Boolean(disabledReason)}
             placeholder={lead ? 'Message' : 'Select a chat'}
             className="h-8 min-w-0 flex-1 rounded-full border border-slate-100 bg-white px-3 text-[10px] font-semibold text-slate-700 outline-none placeholder:text-slate-400 focus:border-emerald-300"
           />
           <button
             type="submit"
-            disabled={!lead || !message.trim() || sending}
+            disabled={!lead || Boolean(disabledReason) || !message.trim() || sending}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#075e54] text-white transition disabled:opacity-40"
             title="Send WhatsApp message"
           >
@@ -299,6 +412,103 @@ function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending,
         </form>
       </div>
     </div>
+  );
+}
+
+function ContactPanel({ lead, lastInboundAt, canReply, metaReady }) {
+  if (!lead) {
+    return <EmptyState title="No contact selected" copy="Choose a conversation to see lead details." />;
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <Avatar name={lead.name || lead.phone} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold text-slate-950">{lead.name || lead.phone}</p>
+          <p className="mt-0.5 truncate text-xs font-semibold text-emerald-700">{lead.phone}</p>
+          {lead.email && <p className="mt-0.5 truncate text-xs font-medium text-slate-500">{lead.email}</p>}
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <InfoPill icon={UserCircleIcon} label="Status" value={formatStatus(lead.status)} />
+        <InfoPill icon={ClockIcon} label="Window" value={canReply ? 'Open' : 'Limited'} active={canReply} />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Reply Readiness</p>
+        <p className={`mt-2 text-sm font-bold ${metaReady && canReply ? 'text-emerald-700' : 'text-amber-700'}`}>
+          {metaReady && canReply ? 'Ready to reply' : 'Attention needed'}
+        </p>
+        <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
+          {lastInboundAt ? `Last customer message ${formatRelative(lastInboundAt)}.` : 'No recent customer message found in this chat window.'}
+        </p>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Tags</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(lead.tags || []).length ? lead.tags.map((tag) => (
+            <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">
+              <TagIcon className="h-3 w-3" />
+              {tag}
+            </span>
+          )) : <span className="text-xs font-semibold text-slate-400">No tags added</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, detail, icon: Icon, tone = 'primary' }) {
+  const toneClass = {
+    primary: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+    emerald: 'bg-green-50 text-green-700 ring-green-100',
+    amber: 'bg-amber-50 text-amber-700 ring-amber-100',
+    slate: 'bg-slate-100 text-slate-700 ring-slate-200'
+  }[tone] || 'bg-emerald-50 text-emerald-700 ring-emerald-100';
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p>
+          <p className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{typeof value === 'number' ? formatNumber(value) : value}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">{detail}</p>
+        </div>
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${toneClass}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function InfoPill({ icon: Icon, label, value, active = false }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+      <Icon className={`h-4 w-4 ${active ? 'text-emerald-600' : 'text-slate-500'}`} />
+      <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="mt-0.5 truncate text-xs font-bold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const tone = {
+    interested: 'bg-emerald-100 text-emerald-700 ring-emerald-100',
+    converted: 'bg-green-100 text-green-700 ring-green-100',
+    pending: 'bg-amber-100 text-amber-700 ring-amber-100',
+    follow_up: 'bg-blue-100 text-blue-700 ring-blue-100',
+    not_interested: 'bg-slate-100 text-slate-600 ring-slate-200',
+    broadcast: 'bg-purple-50 text-purple-700 ring-purple-100'
+  }[status] || 'bg-white text-slate-500 ring-slate-200';
+
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ring-1 ${tone}`}>
+      {formatStatus(status)}
+    </span>
   );
 }
 
@@ -322,4 +532,21 @@ function EmptyState({ title, copy }) {
 
 function Spinner({ small = false }) {
   return <span className={`block animate-spin rounded-full border-current border-t-transparent ${small ? 'h-4 w-4 border-2' : 'h-8 w-8 border-4 text-emerald-700'}`} />;
+}
+
+function formatStatus(value) {
+  return String(value || 'new').replace(/_/g, ' ');
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('en-IN').format(Number(value) || 0);
+}
+
+function formatRelative(value) {
+  if (!value) return '';
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
 }
