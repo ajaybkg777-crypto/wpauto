@@ -34,6 +34,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(emptyStats);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
   const isFetchingRef = useRef(false);
 
@@ -50,30 +51,46 @@ export default function Dashboard() {
   const whatsappVerified = whatsapp.businessVerificationStatus === 'verified'
     || whatsapp.accountReviewStatus === 'APPROVED';
   const whatsappPending = whatsappConnected && !whatsappVerified;
+  const hasLiveData = Boolean(lastUpdated);
 
-  const sent = stats.analytics?.totalMessagesSent || 0;
-  const delivered = stats.analytics?.totalMessagesDelivered || 0;
-  const read = stats.analytics?.totalMessagesRead || 0;
-  const failedMessages = stats.analytics?.totalMessagesFailed || stats.messageLedger?.failed || stats.broadcasts?.failedRecipients || 0;
-  const customerReplies = stats.messageLedger?.inbound || 0;
+  const sent = toNumber(stats.analytics?.totalMessagesSent);
+  const delivered = toNumber(stats.analytics?.totalMessagesDelivered);
+  const read = toNumber(stats.analytics?.totalMessagesRead);
+  const failedMessages = toNumber(stats.analytics?.totalMessagesFailed || stats.messageLedger?.failed || stats.broadcasts?.failedRecipients);
+  const customerReplies = toNumber(stats.messageLedger?.inbound);
   const safePercent = (value, total) => {
     if (!total || total <= 0) return 0;
     return Math.max(0, Math.min(100, Math.round((value / total) * 100)));
   };
   const deliveryRate = safePercent(delivered, sent);
   const readRate = safePercent(read, delivered || sent);
+  const replyRate = safePercent(customerReplies, sent);
   const analyticsOutOfSync = read > Math.max(delivered, sent) || delivered > sent;
+  const maxMessagesPerDay = toNumber(stats.limits?.maxMessagesPerDay);
+  const messagesUsedToday = toNumber(stats.limits?.messagesUsedToday);
   const usagePercent = Math.min(
-    Math.round(((stats.limits?.messagesUsedToday || 0) / (stats.limits?.maxMessagesPerDay || 1)) * 100),
+    Math.round((messagesUsedToday / (maxMessagesPerDay || 1)) * 100),
     100
   );
   const approvedTemplatePercent = stats.templates?.total
-    ? Math.round(((stats.templates?.approved || 0) / stats.templates.total) * 100)
+    ? Math.round((toNumber(stats.templates?.approved) / stats.templates.total) * 100)
     : 0;
-  const activeBroadcasts = (stats.broadcasts?.scheduled || 0) + (stats.broadcasts?.processing || 0);
+  const activeBroadcasts = toNumber(stats.broadcasts?.scheduled) + toNumber(stats.broadcasts?.processing);
   const automationRate = stats.automations?.total
-    ? Math.round(((stats.automations?.active || 0) / stats.automations.total) * 100)
+    ? Math.round((toNumber(stats.automations?.active) / stats.automations.total) * 100)
     : 0;
+  const leadConversionRate = safePercent(stats.leads?.interested, stats.leads?.total);
+  const totalBroadcasts = toNumber(stats.broadcasts?.total);
+  const totalTemplates = toNumber(stats.templates?.total);
+  const totalAutomations = toNumber(stats.automations?.total);
+  const totalRecipients = toNumber(stats.broadcasts?.recipients);
+  const queueCount = activeBroadcasts + toNumber(stats.broadcasts?.failed);
+  const readyScore = Math.round((
+    (whatsappConnected ? 1 : 0)
+    + (whatsappVerified ? 1 : 0)
+    + (toNumber(stats.templates?.approved) > 0 ? 1 : 0)
+    + (toNumber(stats.automations?.active) > 0 ? 1 : 0)
+  ) / 4 * 100);
   const messageRows = [
     { label: 'Sent', value: sent, color: 'bg-primary' },
     { label: 'Delivered', value: delivered, color: 'bg-emerald-500' },
@@ -82,10 +99,15 @@ export default function Dashboard() {
     { label: 'Replies', value: customerReplies, color: 'bg-amber-400' }
   ];
   const broadcastRows = [
-    { label: 'Scheduled', value: stats.broadcasts?.scheduled || 0, color: 'bg-amber-400' },
-    { label: 'Processing', value: stats.broadcasts?.processing || 0, color: 'bg-teal-500' },
-    { label: 'Completed', value: stats.broadcasts?.completed || 0, color: 'bg-emerald-500' },
-    { label: 'Failed Recipients', value: stats.broadcasts?.failedRecipients || 0, color: 'bg-rose-500' }
+    { label: 'Scheduled', value: toNumber(stats.broadcasts?.scheduled), color: 'bg-amber-400' },
+    { label: 'Processing', value: toNumber(stats.broadcasts?.processing), color: 'bg-teal-500' },
+    { label: 'Completed', value: toNumber(stats.broadcasts?.completed), color: 'bg-emerald-500' },
+    { label: 'Failed Recipients', value: toNumber(stats.broadcasts?.failedRecipients), color: 'bg-rose-500' }
+  ];
+  const leadRows = [
+    { label: 'Interested', value: toNumber(stats.leads?.interested), color: 'bg-emerald-500' },
+    { label: 'Pending', value: toNumber(stats.leads?.pending), color: 'bg-amber-400' },
+    { label: 'Not Interested', value: toNumber(stats.leads?.notInterested), color: 'bg-slate-400' }
   ];
 
   const fetchStats = async ({ background = false } = {}) => {
@@ -99,17 +121,20 @@ export default function Dashboard() {
         schoolAPI.getStats(),
         whatsappAPI.getConfig()
       ]);
+      const statsData = statsResponse.data.data || {};
       setStats({
         ...emptyStats,
-        ...statsResponse.data.data,
+        ...statsData,
         whatsapp: {
-          ...(statsResponse.data.data?.whatsapp || {}),
+          ...(statsData.whatsapp || {}),
           ...(whatsappResponse.data.data || {})
         }
       });
+      setError('');
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to fetch dashboard:', error);
+      setError(error.response?.data?.message || error.message || 'Dashboard data could not be refreshed.');
     } finally {
       setLoading(false);
       if (!background) setRefreshing(false);
@@ -191,10 +216,44 @@ export default function Dashboard() {
   }, [whatsappConnected, whatsappPending, whatsappVerified]);
 
   const importantStats = [
-    { label: 'Contacts', value: stats.leads?.total || 0, icon: UsersIcon, to: '/leads', accent: 'bg-white text-primary ring-slate-200' },
-    { label: 'Interested', value: stats.leads?.interested || 0, icon: CheckCircleIcon, to: '/leads?status=interested', accent: 'bg-white text-emerald-700 ring-slate-200' },
-    { label: 'Approved Templates', value: stats.templates?.approved || 0, icon: DocumentTextIcon, to: '/templates', accent: 'bg-slate-100 text-slate-800 ring-slate-200' },
-    { label: 'Active Campaigns', value: activeBroadcasts, icon: MegaphoneIcon, to: '/broadcast', accent: 'bg-white text-amber-700 ring-slate-200' }
+    { label: 'Contacts', value: toNumber(stats.leads?.total), detail: `${leadConversionRate}% interested`, icon: UsersIcon, to: '/leads', accent: 'bg-white text-primary ring-slate-200' },
+    { label: 'Interested Leads', value: toNumber(stats.leads?.interested), detail: `${formatNumber(stats.leads?.pending)} pending`, icon: CheckCircleIcon, to: '/leads?status=interested', accent: 'bg-white text-emerald-700 ring-slate-200' },
+    { label: 'Approved Templates', value: toNumber(stats.templates?.approved), detail: `${formatNumber(totalTemplates)} total templates`, icon: DocumentTextIcon, to: '/templates', accent: 'bg-slate-100 text-slate-800 ring-slate-200' },
+    { label: 'Active Campaigns', value: activeBroadcasts, detail: `${formatNumber(totalBroadcasts)} total broadcasts`, icon: MegaphoneIcon, to: '/broadcast', accent: 'bg-white text-amber-700 ring-slate-200' }
+  ];
+
+  const summaryTiles = [
+    { label: 'Read Rate', value: analyticsOutOfSync ? 'Syncing' : `${readRate}%`, detail: `${formatNumber(read)} reads` },
+    { label: 'Reply Rate', value: `${replyRate}%`, detail: `${formatNumber(customerReplies)} inbound replies` },
+    { label: 'Recipients', value: formatNumber(totalRecipients), detail: 'Across all broadcasts' },
+    { label: 'Readiness', value: `${readyScore}%`, detail: 'Setup, templates and automation' }
+  ];
+
+  const healthItems = [
+    {
+      title: 'Meta Connection',
+      value: whatsappConnected ? 'Connected' : 'Setup needed',
+      detail: whatsappConnected ? `${metaDisplayName}${whatsapp.phoneNumber ? ` | ${whatsapp.phoneNumber}` : ''}` : `${businessName} needs Meta connection`,
+      ok: whatsappConnected,
+      to: '/whatsapp-setup',
+      icon: ShieldCheckIcon
+    },
+    {
+      title: 'Template Readiness',
+      value: `${formatNumber(stats.templates?.approved)} approved`,
+      detail: `${formatNumber(stats.templates?.pending)} in review, ${formatNumber(stats.templates?.rejected)} rejected`,
+      ok: toNumber(stats.templates?.approved) > 0,
+      to: '/templates',
+      icon: DocumentTextIcon
+    },
+    {
+      title: 'Automation',
+      value: `${formatNumber(stats.automations?.active)} active`,
+      detail: `${formatNumber(totalAutomations)} total rules from database`,
+      ok: toNumber(stats.automations?.active) > 0,
+      to: '/chatbot',
+      icon: BoltIcon
+    }
   ];
 
   const nextSteps = [
@@ -245,13 +304,15 @@ export default function Dashboard() {
         <div>
           <p className="text-sm font-bold uppercase tracking-[0.14em] text-primary">Dashboard</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-gray-950">{businessName}</h1>
-          <p className="mt-1 text-sm text-gray-600">Live Meta and database overview for this workspace.</p>
+          <p className="mt-1 text-sm text-gray-600">
+            Live Meta, contacts, campaigns, templates, and automation overview for this workspace.
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-3">
           <div className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-primary shadow-sm">
             <span className={`h-2.5 w-2.5 rounded-full ${refreshing ? 'bg-amber-400' : 'bg-green-500'}`} />
-            {refreshing ? 'Syncing...' : `Live${lastUpdated ? ` ${formatRelativeTime(lastUpdated)}` : ''}`}
+            {refreshing ? 'Syncing...' : `${hasLiveData ? 'Live' : 'Waiting'}${lastUpdated ? ` ${formatRelativeTime(lastUpdated)}` : ''}`}
           </div>
           <button
             type="button"
@@ -268,6 +329,12 @@ export default function Dashboard() {
           </Link>
         </div>
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+          Dashboard refresh failed: {error}
+        </div>
+      )}
 
       <motion.section
         initial={{ opacity: 0, y: -10 }}
@@ -335,11 +402,11 @@ export default function Dashboard() {
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
-              <SmallMetric label="Delivery" value={`${deliveryRate}%`} detail={`${Math.min(delivered, sent)} of ${sent} sent`} />
+              <SmallMetric label="Delivery" value={`${deliveryRate}%`} detail={`${formatNumber(Math.min(delivered, sent))} of ${formatNumber(sent)} sent`} />
               <SmallMetric
                 label={analyticsOutOfSync ? 'Read Sync' : 'Read Rate'}
                 value={analyticsOutOfSync ? 'Updating' : `${readRate}%`}
-                detail={analyticsOutOfSync ? 'Meta status counters are syncing' : `${Math.min(read, delivered || sent)} read`}
+                detail={analyticsOutOfSync ? 'Meta status counters are syncing' : `${formatNumber(Math.min(read, delivered || sent))} read`}
               />
             </div>
           </div>
@@ -358,7 +425,8 @@ export default function Dashboard() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-sm font-semibold text-gray-500">{stat.label}</p>
-                  <p className="mt-2 text-3xl font-bold tracking-tight text-gray-950">{stat.value}</p>
+                  <p className="mt-2 text-3xl font-bold tracking-tight text-gray-950">{formatNumber(stat.value)}</p>
+                  <p className="mt-1 text-sm font-semibold text-gray-500">{stat.detail}</p>
                 </div>
                 <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ${stat.accent}`}>
                   <stat.icon className="h-6 w-6" />
@@ -369,31 +437,20 @@ export default function Dashboard() {
         ))}
       </div>
 
+      <div className="flow-dash-health-grid grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {summaryTiles.map((item) => (
+          <div key={item.label} className="flow-dash-tile rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{item.label}</p>
+            <p className="mt-2 text-2xl font-bold tracking-tight text-gray-950">{item.value}</p>
+            <p className="mt-1 text-sm font-semibold text-gray-500">{item.detail}</p>
+          </div>
+        ))}
+      </div>
+
       <div className="flow-dash-health-grid grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <HealthCard
-          title="Meta Connection"
-          value={whatsappConnected ? 'Connected' : 'Setup needed'}
-          detail={whatsappConnected ? `${metaDisplayName}${whatsapp.phoneNumber ? ` | ${whatsapp.phoneNumber}` : ''}` : `${businessName} needs Meta connection`}
-          ok={whatsappConnected}
-          to="/whatsapp-setup"
-          icon={ShieldCheckIcon}
-        />
-        <HealthCard
-          title="Template Readiness"
-          value={`${stats.templates?.approved || 0} approved`}
-          detail={`${stats.templates?.pending || 0} in review, ${stats.templates?.rejected || 0} rejected`}
-          ok={(stats.templates?.approved || 0) > 0}
-          to="/templates"
-          icon={DocumentTextIcon}
-        />
-        <HealthCard
-          title="Automation"
-          value={`${stats.automations?.active || 0} active`}
-          detail={`${stats.automations?.total || 0} total rules from database`}
-          ok={(stats.automations?.active || 0) > 0}
-          to="/chatbot"
-          icon={BoltIcon}
-        />
+        {healthItems.map((item) => (
+          <HealthCard key={item.title} {...item} />
+        ))}
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_400px]">
@@ -417,7 +474,7 @@ export default function Dashboard() {
           <div className="mt-5 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm font-bold text-gray-950">Message Flow</p>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-primary ring-1 ring-slate-200">
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-primary ring-1 ring-slate-200">
                 {deliveryRate}% delivered
               </span>
             </div>
@@ -444,7 +501,7 @@ export default function Dashboard() {
             <div className="mb-2 flex justify-between text-sm">
               <span className="text-gray-600">Message usage</span>
               <span className="font-bold text-gray-900">
-                {stats.limits?.messagesUsedToday || 0} / {stats.limits?.maxMessagesPerDay || 0}
+                {formatNumber(messagesUsedToday)} / {formatNumber(maxMessagesPerDay)}
               </span>
             </div>
             <div className="h-3 overflow-hidden rounded-full bg-gray-100">
@@ -459,12 +516,44 @@ export default function Dashboard() {
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3">
-            <SmallMetric label="Scheduled" value={stats.broadcasts?.scheduled || 0} />
-            <SmallMetric label="Failed Recipients" value={stats.broadcasts?.failedRecipients || 0} />
+            <SmallMetric label="Scheduled" value={formatNumber(stats.broadcasts?.scheduled)} />
+            <SmallMetric label="Failed Recipients" value={formatNumber(stats.broadcasts?.failedRecipients)} />
           </div>
           <div className="mt-5 rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
             <p className="mb-4 text-sm font-bold text-gray-950">Broadcast Queue</p>
             <MiniBarChart rows={broadcastRows} compact />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[.9fr_1.1fr]">
+        <div className="flow-dash-panel card p-6">
+          <div className="mb-5 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-gray-950">Lead Pipeline</h2>
+              <p className="text-sm text-gray-600">Status split from the live contacts database.</p>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-primary ring-1 ring-slate-200">
+              {leadConversionRate}% conversion
+            </span>
+          </div>
+          <MiniBarChart rows={leadRows} />
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <SmallMetric label="Total Contacts" value={formatNumber(stats.leads?.total)} />
+            <SmallMetric label="Pending Follow-up" value={formatNumber(stats.leads?.pending)} />
+          </div>
+        </div>
+
+        <div className="flow-dash-panel card p-6">
+          <div className="mb-5">
+            <h2 className="text-lg font-bold text-gray-950">Workspace Snapshot</h2>
+            <p className="text-sm text-gray-600">All counts are generated from the current school workspace.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <SnapshotRow label="Broadcasts" value={formatNumber(totalBroadcasts)} detail={`${formatNumber(queueCount)} need attention or are queued`} />
+            <SnapshotRow label="Templates" value={formatNumber(totalTemplates)} detail={`${formatNumber(stats.templates?.approved)} approved for sending`} />
+            <SnapshotRow label="Automations" value={formatNumber(totalAutomations)} detail={`${formatNumber(stats.automations?.active)} active rules`} />
+            <SnapshotRow label="Outbound Ledger" value={formatNumber(stats.messageLedger?.outbound)} detail={`${formatNumber(customerReplies)} inbound replies`} />
           </div>
         </div>
       </div>
@@ -615,7 +704,7 @@ function SmallMetric({ label, value, detail }) {
   return (
     <div className="rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="mt-1 text-lg font-bold text-gray-950">{value}</p>
+      <p className="mt-1 text-lg font-bold text-gray-950">{typeof value === 'number' ? formatNumber(value) : value}</p>
       {detail && <p className="mt-1 text-xs font-semibold text-gray-500">{detail}</p>}
     </div>
   );
@@ -668,7 +757,7 @@ function MessageMetric({ label, value, icon: Icon }) {
         <Icon className="h-5 w-5" />
       </div>
       <p className="mt-4 text-sm font-semibold text-gray-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold tracking-tight text-gray-950">{value}</p>
+      <p className="mt-1 text-2xl font-bold tracking-tight text-gray-950">{formatNumber(value)}</p>
     </div>
   );
 }
@@ -686,7 +775,7 @@ function MiniBarChart({ rows, compact = false }) {
           <div key={row.label}>
             <div className="mb-2 flex items-center justify-between gap-3 text-sm">
               <span className="font-semibold text-gray-600">{row.label}</span>
-              <span className="font-bold text-gray-950">{value}</span>
+              <span className="font-bold text-gray-950">{formatNumber(value)}</span>
             </div>
             <div className="h-2.5 overflow-hidden rounded-full bg-gray-200/70">
               <div className={`h-full rounded-full ${row.color} transition-all`} style={{ width: `${width}%` }} />
@@ -696,6 +785,31 @@ function MiniBarChart({ rows, compact = false }) {
       })}
     </div>
   );
+}
+
+function SnapshotRow({ label, value, detail }) {
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-gradient-to-b from-white to-gray-50 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-gray-950">{label}</p>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{detail}</p>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-primary ring-1 ring-slate-200">
+          {value}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('en-IN').format(toNumber(value));
 }
 
 function getSyncLabel(sync, lastSyncedAt) {
