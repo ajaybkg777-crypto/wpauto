@@ -517,6 +517,7 @@ exports.connectConfiguredAccount = async (req, res) => {
       { upsert: true, new: true }
     );
 
+    await subscribeWabaToApp(accountUpdate.wabaId, process.env.META_SYSTEM_USER_ACCESS_TOKEN);
     await createStarterAutomation(school._id);
 
     res.status(200).json({
