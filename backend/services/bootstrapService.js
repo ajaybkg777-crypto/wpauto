@@ -3,6 +3,7 @@ const User = require('../models/User');
 const School = require('../models/School');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
 const { encryptSecret } = require('../utils/tokenVault');
+const { ensureWabaWebhookSubscription } = require('./metaWebhookService');
 
 const seedAdminUser = async () => {
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
@@ -70,16 +71,17 @@ const runBootstrap = async () => {
     && process.env.META_WABA_ID
     && process.env.META_SYSTEM_USER_ACCESS_TOKEN
   ) {
+    const school = await School.findById(admin.schoolId);
     const accountUpdate = {
       provider: 'meta',
       status: 'connected',
       appName: process.env.META_APP_NAME || 'Meta WhatsApp',
       appId: process.env.META_APP_ID,
       phoneNumberId: process.env.META_PHONE_NUMBER_ID,
-      phoneNumber: process.env.META_PHONE_NUMBER || '',
-      displayName: process.env.META_DISPLAY_NAME || process.env.ADMIN_SCHOOL_NAME || 'Bkgis',
+      phoneNumber: process.env.META_PHONE_NUMBER || school?.whatsapp?.phoneNumber || '',
+      displayName: process.env.META_DISPLAY_NAME || school?.whatsapp?.displayName || process.env.ADMIN_SCHOOL_NAME || 'Bkgis',
       wabaId: process.env.META_WABA_ID,
-      businessId: process.env.META_BUSINESS_ID,
+      businessId: process.env.META_BUSINESS_ID || school?.whatsapp?.businessId,
       accessToken: encryptSecret(process.env.META_SYSTEM_USER_ACCESS_TOKEN),
       connectedAt: new Date()
     };
@@ -104,6 +106,8 @@ const runBootstrap = async () => {
         'whatsapp.connectedAt': accountUpdate.connectedAt
       }
     });
+
+    await ensureWabaWebhookSubscription(accountUpdate.wabaId, process.env.META_SYSTEM_USER_ACCESS_TOKEN);
   }
 };
 
