@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const School = require('../models/School');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
@@ -12,6 +13,18 @@ const seedAdminUser = async () => {
   let user = await User.findOne({ email }).select('+password');
   if (user) {
     let changed = false;
+    if (!user.schoolId) {
+      let school = await School.findOne({ owner: user._id });
+      if (!school) {
+        school = await School.create({
+          name: process.env.ADMIN_SCHOOL_NAME || 'Bkgis',
+          phone: process.env.ADMIN_PHONE || '',
+          owner: user._id
+        });
+      }
+      user.schoolId = school._id;
+      changed = true;
+    }
     if (user.role !== 'super_admin') {
       user.role = 'super_admin';
       changed = true;
@@ -24,24 +37,27 @@ const seedAdminUser = async () => {
     return user;
   }
 
+  const userId = new mongoose.Types.ObjectId();
+  const schoolId = new mongoose.Types.ObjectId();
   const school = await School.create({
+    _id: schoolId,
     name: process.env.ADMIN_SCHOOL_NAME || 'Bkgis',
-    phone: process.env.ADMIN_PHONE || ''
+    phone: process.env.ADMIN_PHONE || '',
+    owner: userId
   });
 
   user = await User.create({
+    _id: userId,
     name: process.env.ADMIN_NAME || 'Super Admin',
     email,
     password,
     role: 'super_admin',
-    schoolId: school._id,
+    schoolId,
     authProvider: 'local',
     isEmailVerified: true,
     isActive: true
   });
 
-  school.owner = user._id;
-  await school.save();
   return user;
 };
 
