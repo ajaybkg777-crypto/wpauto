@@ -146,6 +146,37 @@ const normalizeWhatsAppPhone = (phone) => {
   return digits;
 };
 
+const normalizeColumnKey = (value = '') => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '');
+
+const isPhoneColumn = (column = '') => {
+  const key = normalizeColumnKey(column);
+  return [
+    'phone',
+    'mobile',
+    'number',
+    'phoneno',
+    'mobileno',
+    'contactno',
+    'whatsapp',
+    'whatsappno',
+    'contact',
+    'cell',
+    'cellphone'
+  ].includes(key)
+    || key.includes('phonenumber')
+    || key.includes('mobilenumber')
+    || key.includes('whatsappnumber')
+    || key.includes('contactnumber');
+};
+
+const getRowPhoneValue = (row = {}) => {
+  const phoneEntry = Object.entries(row).find(([key]) => isPhoneColumn(key));
+  return phoneEntry ? phoneEntry[1] : '';
+};
+
 const buildRecipients = (leads) => {
   const seen = new Set();
   return leads.reduce((items, lead) => {
@@ -165,14 +196,14 @@ const buildCsvRecipients = (rows = []) => {
   const seen = new Set();
   return rows.reduce((items, row) => {
     if (!row || typeof row !== 'object') return items;
-    const sourcePhone = row.Phone || row.phone || row.Mobile || row.mobile || row.Number || row.number;
+    const sourcePhone = getRowPhoneValue(row);
     const phone = normalizeWhatsAppPhone(sourcePhone);
     if (!phone || seen.has(phone)) return items;
     seen.add(phone);
 
     const variables = Object.entries(row).reduce((data, [key, value]) => {
       const cleanKey = String(key || '').trim();
-      if (!cleanKey || /^phone$/i.test(cleanKey)) return data;
+      if (!cleanKey || isPhoneColumn(cleanKey)) return data;
       data[cleanKey] = value == null ? '' : String(value).trim();
       return data;
     }, {});

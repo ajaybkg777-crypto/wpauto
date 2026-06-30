@@ -92,20 +92,86 @@ const csvRowsToObjects = (text = '') => {
       item[column] = String(row[index] || '').trim();
       return item;
     }, {});
-  }).filter((row) => String(row.Phone || row.phone || row.Mobile || row.mobile || '').trim());
+  }).filter((row) => getRowPhoneValue(row));
   return { columns, recipients };
 };
 
-const getPhoneColumn = (columns = []) => columns.find((column) => /^(phone|mobile|number)$/i.test(column));
-const getVariableColumns = (columns = []) => columns.filter((column) => !/^(phone|mobile|number)$/i.test(column));
+const xmlTextToObjects = (text = '') => {
+  const parser = new DOMParser();
+  const document = parser.parseFromString(text, 'application/xml');
+  const parserError = document.querySelector('parsererror');
+  if (parserError) throw new Error('Invalid XML file');
+
+  const allElements = Array.from(document.querySelectorAll('*'));
+  const recordElements = allElements.filter((element) => {
+    const childElements = Array.from(element.children);
+    if (!childElements.length) return false;
+    return childElements.some((child) => /^(phone|mobile|number)$/i.test(child.tagName));
+  });
+
+  const recipients = recordElements.map((element) => {
+    const row = {};
+    Array.from(element.attributes || []).forEach((attribute) => {
+      row[attribute.name] = String(attribute.value || '').trim();
+    });
+    Array.from(element.children).forEach((child) => {
+      if (child.children.length) return;
+      row[child.tagName] = String(child.textContent || '').trim();
+    });
+    return row;
+  }).filter((row) => getRowPhoneValue(row));
+
+  const columns = [...new Set(recipients.flatMap((row) => Object.keys(row)))];
+  return { columns, recipients };
+};
+
+const getAudienceRowsFromFile = (text = '', filename = '', type = '') => {
+  const cleanText = String(text || '').replace(/^\uFEFF/, '').trim();
+  const isXml = /\.xml$/i.test(filename) || /xml/i.test(type) || cleanText.startsWith('<');
+  return isXml ? xmlTextToObjects(cleanText) : csvRowsToObjects(cleanText);
+};
+
+const normalizeColumnKey = (value = '') => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '');
+
+const isPhoneColumn = (column = '') => {
+  const key = normalizeColumnKey(column);
+  return [
+    'phone',
+    'mobile',
+    'number',
+    'phoneno',
+    'mobileno',
+    'contactno',
+    'whatsapp',
+    'whatsappno',
+    'contact',
+    'cell',
+    'cellphone'
+  ].includes(key)
+    || key.includes('phonenumber')
+    || key.includes('mobilenumber')
+    || key.includes('whatsappnumber')
+    || key.includes('contactnumber');
+};
+
+const getPhoneColumn = (columns = []) => columns.find((column) => isPhoneColumn(column));
+const getRowPhoneValue = (row = {}) => {
+  const phoneColumn = getPhoneColumn(Object.keys(row));
+  return phoneColumn ? row[phoneColumn] : '';
+};
+const getVariableColumns = (columns = []) => columns.filter((column) => !isPhoneColumn(column));
 
 const resolvePreviewVariableValue = (value = '', formData = {}) => {
   const sampleRow = formData.csvRecipients?.[0] || {};
+  const samplePhone = getRowPhoneValue(sampleRow) || '919826763101';
   const context = {
     lead_name: sampleRow.Name || sampleRow.name || 'Sample Parent',
     name: sampleRow.Name || sampleRow.name || 'Sample Parent',
     school_name: 'BKG International School',
-    phone: sampleRow.Phone || sampleRow.phone || sampleRow.Mobile || sampleRow.mobile || '919826763101',
+    phone: samplePhone,
     ...sampleRow
   };
   const normalizedContext = Object.entries(context).reduce((items, [key, item]) => {
@@ -192,7 +258,7 @@ export default function CreateBroadcast() {
 
   const audienceLabel = useMemo(() => {
     if (formData.recipientType === 'selected') return `${formData.selectedLeads.length} selected`;
-    if (formData.recipientType === 'csv') return formData.csvRecipients.length ? `${formData.csvRecipients.length} CSV contacts` : 'CSV required';
+    if (formData.recipientType === 'csv') return formData.csvRecipients.length ? `${formData.csvRecipients.length} file contacts` : 'CSV/XML required';
     if (formData.recipientType === 'all') return 'All contacts';
     if (formData.recipientType === 'status') return `Status: ${formData.statusFilter}`;
     if (formData.recipientType === 'tag') return formData.tagFilter ? `Tag: ${formData.tagFilter}` : 'Tag required';
@@ -282,13 +348,13 @@ export default function CreateBroadcast() {
 
     try {
       const text = await file.text();
-      const { columns, recipients } = csvRowsToObjects(text.replace(/^\uFEFF/, ''));
+      const { columns, recipients } = getAudienceRowsFromFile(text, file.name, file.type);
       if (!getPhoneColumn(columns)) {
-        toast.error('CSV me Phone, Mobile, ya Number column hona chahiye');
+        toast.error('File me Phone, Mobile, ya Number field hona chahiye');
         return;
       }
       if (!recipients.length) {
-        toast.error('CSV file has no valid phone rows');
+        toast.error('File has no valid phone rows');
         return;
       }
       setFormData((current) => ({
@@ -306,9 +372,9 @@ export default function CreateBroadcast() {
         csvColumns: columns,
         csvFilename: file.name
       }));
-      toast.success(`${recipients.length} CSV contacts loaded`);
+      toast.success(`${recipients.length} contacts loaded from ${file.name}`);
     } catch (error) {
-      toast.error('CSV read nahi ho payi');
+      toast.error(error.message || 'File read nahi ho payi');
     } finally {
       event.target.value = '';
     }
@@ -345,7 +411,7 @@ export default function CreateBroadcast() {
     }
 
     if (formData.recipientType === 'csv' && formData.csvRecipients.length === 0) {
-      if (showToast) toast.error('Upload CSV audience first');
+      if (showToast) toast.error('Upload CSV/XML audience first');
       return false;
     }
 
@@ -767,21 +833,21 @@ function TemplateStep({ formData, templates, selectedTemplate, needsImageHeader,
 function VariableStep({ variables, variablesComplete, values, formData, csvInputRef, onUpdate, onCsvUpload, onBack, onNext }) {
   const variableColumns = getVariableColumns(formData.csvColumns);
   const sampleRow = formData.csvRecipients?.[0] || {};
-  const samplePhone = sampleRow[getPhoneColumn(formData.csvColumns)] || sampleRow.Phone || sampleRow.phone || sampleRow.Mobile || sampleRow.mobile || '-';
+  const samplePhone = sampleRow[getPhoneColumn(formData.csvColumns)] || getRowPhoneValue(sampleRow) || '-';
 
   return (
     <div>
       <SectionHead title="Dynamic Variables" copy="Personalize Meta template placeholders before targeting your audience." />
-      <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={onCsvUpload} className="hidden" />
+      <input ref={csvInputRef} type="file" accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
       <div className="bb-csv-map">
         <div>
-          <span>CSV Variable Source</span>
-          <b>{formData.csvFilename || 'Upload CSV to map row-wise variables'}</b>
-          <p>{formData.csvRecipients.length ? `${formData.csvRecipients.length} recipients loaded. First number: ${samplePhone}` : 'CSV columns can be used as {{ColumnName}} in template variables.'}</p>
+          <span>CSV/XML Variable Source</span>
+          <b>{formData.csvFilename || 'Upload CSV or XML to map row-wise variables'}</b>
+          <p>{formData.csvRecipients.length ? `${formData.csvRecipients.length} recipients loaded. First number: ${samplePhone}` : 'CSV/XML fields can be used as {{ColumnName}} in template variables.'}</p>
         </div>
         <button type="button" className="bb-soft" onClick={() => csvInputRef.current?.click()}>
           <DocumentArrowUpIcon className="h-5 w-5" />
-          {formData.csvRecipients.length ? 'Change CSV' : 'Upload CSV'}
+          {formData.csvRecipients.length ? 'Change File' : 'Upload File'}
         </button>
       </div>
       {!!variableColumns.length && (
@@ -831,7 +897,7 @@ function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, on
   const types = [
     { value: 'status', label: 'By Status', detail: 'Best for lead follow-ups' },
     { value: 'selected', label: 'Selected', detail: 'Choose exact contacts' },
-    { value: 'csv', label: 'CSV Upload', detail: 'Use row-wise variables' },
+    { value: 'csv', label: 'CSV/XML Upload', detail: 'Use row-wise variables' },
     { value: 'tag', label: 'By Tag', detail: 'Target imported segments' },
     { value: 'all', label: 'All Contacts', detail: 'Full database blast' }
   ];
@@ -868,14 +934,14 @@ function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, on
         )}
         {formData.recipientType === 'csv' && (
           <div>
-            <input ref={csvInputRef} type="file" accept=".csv,text/csv" onChange={onCsvUpload} className="hidden" />
+            <input ref={csvInputRef} type="file" accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
             <div className="bb-image-uploader">
               <div className="bb-image-preview">
                 <DocumentArrowUpIcon className="h-9 w-9" />
               </div>
               <div className="flex-1">
-                <p className="font-bold text-[#0f2b63]">{formData.csvFilename || 'Upload CSV audience'}</p>
-                <p className="mt-1 text-sm text-slate-500">Phone column se recipient banega. Baaki columns variables ke liye available rahenge.</p>
+                <p className="font-bold text-[#0f2b63]">{formData.csvFilename || 'Upload CSV/XML audience'}</p>
+                <p className="mt-1 text-sm text-slate-500">Phone/Mobile/Number field se recipient banega. Baaki fields variables ke liye available rahenge.</p>
                 {!!formData.csvColumns.length && (
                   <p className="mt-1 text-xs font-bold text-emerald-700">
                     {formData.csvRecipients.length} rows: {formData.csvColumns.join(', ')}
@@ -884,13 +950,13 @@ function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, on
               </div>
               <button type="button" className="bb-action" onClick={() => csvInputRef.current?.click()}>
                 <DocumentArrowUpIcon className="h-5 w-5" />
-                {formData.csvRecipients.length ? 'Change CSV' : 'Upload CSV'}
+                {formData.csvRecipients.length ? 'Change File' : 'Upload File'}
               </button>
             </div>
             {!!formData.csvColumns.length && (
               <div className="bb-info mt-4">
                 <span>Use In Variables</span>
-                <b>{formData.csvColumns.filter((column) => !/^phone$/i.test(column)).map((column) => `{{${column}}}`).join('  ') || 'No variable columns found'}</b>
+                <b>{getVariableColumns(formData.csvColumns).map((column) => `{{${column}}}`).join('  ') || 'No variable columns found'}</b>
               </div>
             )}
           </div>
