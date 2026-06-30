@@ -7,6 +7,7 @@ const WhatsAppAccount = require('../models/WhatsAppAccount');
 const Message = require('../models/Message');
 const { encryptSecret } = require('../utils/tokenVault');
 const { syncMetaAccountForSchool } = require('../services/metaAccountService');
+const { ensureWabaWebhookSubscription } = require('../services/metaWebhookService');
 const { leadConversationUpdate, shouldStoreRawPayloads } = require('../utils/storagePolicy');
 const jwt = require('jsonwebtoken');
 
@@ -258,26 +259,6 @@ const discoverMetaAssets = async (accessToken, onboarding = {}) => {
   return finalizeMetaAssets(discovered, accessToken);
 };
 
-const subscribeWabaToApp = async (wabaId, accessToken) => {
-  if (!wabaId) return;
-
-  try {
-    const response = await fetch(`${getMetaGraphBaseUrl()}/${wabaId}/subscribed_apps`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    const data = await response.json();
-    if (!response.ok || data.error) {
-      console.warn('Unable to subscribe WABA webhook:', data.error?.message || 'Meta subscription failed');
-    }
-  } catch (error) {
-    console.warn('Unable to subscribe WABA webhook:', error.message);
-  }
-};
-
 const assertMetaPhoneAvailableForSchool = async (schoolId, phoneNumberId) => {
   if (!phoneNumberId) return;
 
@@ -517,7 +498,7 @@ exports.connectConfiguredAccount = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    await subscribeWabaToApp(accountUpdate.wabaId, process.env.META_SYSTEM_USER_ACCESS_TOKEN);
+    await ensureWabaWebhookSubscription(accountUpdate.wabaId, process.env.META_SYSTEM_USER_ACCESS_TOKEN);
     await createStarterAutomation(school._id);
 
     res.status(200).json({
@@ -613,7 +594,7 @@ exports.handleOnboardingCallback = async (req, res) => {
     school.whatsapp.lastOnboardingEventAt = new Date();
 
     await school.save();
-    await subscribeWabaToApp(school.whatsapp.wabaId, exchangedToken);
+    await ensureWabaWebhookSubscription(school.whatsapp.wabaId, exchangedToken);
 
     const accountUpdate = {
       provider: 'meta',
