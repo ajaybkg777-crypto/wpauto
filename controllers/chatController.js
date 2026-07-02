@@ -122,10 +122,13 @@ exports.getInbox = async (req, res) => {
     });
 
     const itemsById = new Map();
+    const normalizedStatus = String(status || '').trim();
+
     messageGroups.forEach((group) => {
       const phone = normalizeChatPhone(group._id) || group._id;
       const lead = (group.leadId && leadsById.get(String(group.leadId))) || leadsByPhone.get(phone);
-      if (status && lead?.status !== status) return;
+      const itemStatus = lead?.status || 'broadcast';
+      if (normalizedStatus && itemStatus !== normalizedStatus) return;
       if (tag && !lead?.tags?.includes(tag)) return;
       if (!matchesSearch(lead, phone, search)) return;
 
@@ -135,7 +138,7 @@ exports.getInbox = async (req, res) => {
         name: lead?.name || phone,
         phone: lead?.phone || phone,
         email: lead?.email || '',
-        status: lead?.status || 'broadcast',
+        status: itemStatus,
         tags: lead?.tags || [],
         messageCount: group.messageCount,
         lastMessage: {
