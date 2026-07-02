@@ -11,8 +11,6 @@ import {
   MagnifyingGlassIcon,
   PaperAirplaneIcon,
   PhoneIcon,
-  TagIcon,
-  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import { chatAPI, whatsappAPI } from '../../services/api';
 
@@ -30,7 +28,8 @@ const statusOptions = [
   { label: 'Interested', value: 'interested' },
   { label: 'Pending', value: 'pending' },
   { label: 'Follow-up', value: 'follow_up' },
-  { label: 'Converted', value: 'converted' }
+  { label: 'Converted', value: 'converted' },
+  { label: 'Broadcast', value: 'broadcast' }
 ];
 
 export default function LiveChat() {
@@ -257,7 +256,7 @@ export default function LiveChat() {
         <MetricCard label="Reply Window" value={canReply ? 'Open' : 'Limited'} detail={lastInboundAt ? formatRelative(lastInboundAt) : 'No inbound message'} icon={ClockIcon} tone={canReply ? 'emerald' : 'amber'} />
       </section>
 
-      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[340px_minmax(0,1fr)_340px]">
+      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[340px_minmax(0,1fr)_320px]">
         <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
           <div className="border-b border-slate-200 p-4">
             <div className="flex items-center justify-between gap-3">
@@ -337,10 +336,11 @@ export default function LiveChat() {
           )}
         </main>
 
-        <aside className="hidden h-full min-h-0 overflow-y-auto border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
-          <div>
+        <aside className="hidden h-full min-h-0 overflow-hidden border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
+          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
-            <p className="mt-1 text-sm font-bold text-slate-950">WhatsApp conversation</p>
+            <p className="mt-1 truncate text-sm font-bold text-slate-950">{selected?.name || selected?.phone || 'WhatsApp conversation'}</p>
+            {selected?.phone && <p className="mt-0.5 truncate text-xs font-semibold text-emerald-700">{selected.phone}</p>}
           </div>
           <PhonePreview
             lead={selected}
@@ -352,9 +352,6 @@ export default function LiveChat() {
             onSubmit={handleSend}
             disabledReason={disabledReason}
           />
-          <div className="mt-5 border-t border-slate-200 pt-4">
-            <ContactPanel lead={selected} lastInboundAt={lastInboundAt} canReply={canReply} metaReady={metaReady} />
-          </div>
         </aside>
       </section>
       <style>{`
@@ -520,52 +517,6 @@ function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending,
   );
 }
 
-function ContactPanel({ lead, lastInboundAt, canReply, metaReady }) {
-  if (!lead) {
-    return <EmptyState title="No contact selected" copy="Choose a conversation to see lead details." />;
-  }
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start gap-3">
-        <Avatar name={lead.name || lead.phone} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-slate-950">{lead.name || lead.phone}</p>
-          <p className="mt-0.5 truncate text-xs font-semibold text-emerald-700">{lead.phone}</p>
-          {lead.email && <p className="mt-0.5 truncate text-xs font-medium text-slate-500">{lead.email}</p>}
-        </div>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <InfoPill icon={UserCircleIcon} label="Status" value={formatStatus(lead.status)} />
-        <InfoPill icon={ClockIcon} label="Window" value={canReply ? 'Open' : 'Limited'} active={canReply} />
-      </div>
-
-      <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-3">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Reply Readiness</p>
-        <p className={`mt-2 text-sm font-bold ${metaReady && canReply ? 'text-emerald-700' : 'text-amber-700'}`}>
-          {metaReady && canReply ? 'Ready to reply' : 'Attention needed'}
-        </p>
-        <p className="mt-1 text-xs font-medium leading-5 text-slate-500">
-          {lastInboundAt ? `Last customer message ${formatRelative(lastInboundAt)}.` : 'No recent customer message found in this chat window.'}
-        </p>
-      </div>
-
-      <div className="mt-4">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Tags</p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {(lead.tags || []).length ? lead.tags.map((tag) => (
-            <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">
-              <TagIcon className="h-3 w-3" />
-              {tag}
-            </span>
-          )) : <span className="text-xs font-semibold text-slate-400">No tags added</span>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function MetricCard({ label, value, detail, icon: Icon, tone = 'primary' }) {
   const toneClass = {
     primary: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
@@ -586,16 +537,6 @@ function MetricCard({ label, value, detail, icon: Icon, tone = 'primary' }) {
           <Icon className="h-5 w-5" />
         </span>
       </div>
-    </div>
-  );
-}
-
-function InfoPill({ icon: Icon, label, value, active = false }) {
-  return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-      <Icon className={`h-4 w-4 ${active ? 'text-emerald-600' : 'text-slate-500'}`} />
-      <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-0.5 truncate text-xs font-bold text-slate-900">{value}</p>
     </div>
   );
 }
