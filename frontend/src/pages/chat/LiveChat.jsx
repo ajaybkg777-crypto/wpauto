@@ -336,12 +336,7 @@ export default function LiveChat() {
           )}
         </main>
 
-        <aside className="hidden h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50/70 p-3 lg:flex xl:p-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
-            <p className="mt-1 truncate text-sm font-bold text-slate-950">{selected?.name || selected?.phone || 'WhatsApp conversation'}</p>
-            {selected?.phone && <p className="mt-0.5 truncate text-xs font-semibold text-emerald-700">{selected.phone}</p>}
-          </div>
+        <aside className="hidden h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50/70 p-2 lg:flex xl:p-3">
           <PhonePreview
             lead={selected}
             messages={timeline}
@@ -482,9 +477,9 @@ function MessageSkeleton() {
 
 function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
-    <div className="mx-auto mt-3 w-[218px] rounded-[28px] border-[6px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)] xl:w-[238px]">
-      <div className="flex h-[402px] flex-col overflow-hidden rounded-[19px] bg-[#efeae2] xl:h-[452px]">
-        <div className="flex h-[50px] shrink-0 items-center gap-2 bg-[#075e54] px-3 text-white">
+    <div className="mx-auto mt-0 w-[204px] rounded-[26px] border-[6px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)] xl:w-[224px]">
+      <div className="flex h-[372px] flex-col overflow-hidden rounded-[17px] bg-[#efeae2] xl:h-[424px]">
+        <div className="flex h-[46px] shrink-0 items-center gap-2 bg-[#075e54] px-3 text-white">
           <Avatar name={lead?.name || 'W'} small />
           <div className="min-w-0">
             <p className="truncate text-[11px] font-bold">{lead?.name || 'Select a chat'}</p>
