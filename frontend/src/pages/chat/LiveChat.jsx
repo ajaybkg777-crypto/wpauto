@@ -324,13 +324,13 @@ export default function LiveChat() {
               <div ref={timelineRef} onScroll={updateStickiness} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
                 <DateChip />
                 {conversationLoading && !timeline.length ? <MessageSkeleton /> : <MessageList messages={timeline} />}
+                <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} disabledReason={disabledReason} inline />
               </div>
               {showJumpToLatest && (
-                <button type="button" onClick={() => scrollTimelinesToBottom('smooth')} className="absolute bottom-[76px] left-1/2 z-20 -translate-x-1/2 rounded-full bg-slate-950/90 px-3 py-2 text-xs font-bold text-white shadow-lg transition hover:bg-slate-800">
+                <button type="button" onClick={() => scrollTimelinesToBottom('smooth')} className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full bg-slate-950/90 px-3 py-2 text-xs font-bold text-white shadow-lg transition hover:bg-slate-800">
                   New messages
                 </button>
               )}
-              <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} disabledReason={disabledReason} />
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center p-8"><EmptyState title="Choose a conversation" copy="Select a WhatsApp contact to start chatting." /></div>
@@ -427,9 +427,9 @@ function ChatHeader({ lead, conversationLoading = false }) {
   );
 }
 
-function Composer({ message, setMessage, sending, onSubmit, disabledReason = '' }) {
+function Composer({ message, setMessage, sending, onSubmit, disabledReason = '', inline = false }) {
   return (
-    <form onSubmit={onSubmit} className="sticky bottom-0 z-10 flex shrink-0 items-end gap-3 border-t border-black/5 bg-white/95 p-3 shadow-[0_-10px_24px_rgba(15,23,42,.08)] backdrop-blur">
+    <form onSubmit={onSubmit} className={`${inline ? 'mt-4 rounded-2xl border border-black/5 bg-white/95 shadow-[0_12px_28px_rgba(15,23,42,.08)]' : 'sticky bottom-0 z-10 border-t border-black/5 bg-white/95 shadow-[0_-10px_24px_rgba(15,23,42,.08)]'} flex shrink-0 items-end gap-3 p-3 backdrop-blur`}>
       <textarea
         value={message}
         onChange={(event) => setMessage(event.target.value)}
