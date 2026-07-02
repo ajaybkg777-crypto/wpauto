@@ -73,6 +73,22 @@ export default function LiveChat() {
     if (distanceFromBottom < 96) setShowJumpToLatest(false);
   }, []);
 
+  const passConversationScrollToPage = useCallback((event) => {
+    const node = event.currentTarget;
+    const atTop = node.scrollTop <= 0;
+    const atBottom = Math.ceil(node.scrollTop + node.clientHeight) >= node.scrollHeight - 1;
+    const shouldPassUp = event.deltaY < 0 && atTop;
+    const shouldPassDown = event.deltaY > 0 && atBottom;
+
+    if (!shouldPassUp && !shouldPassDown) return;
+
+    const pageScroller = document.querySelector('.dashboard-content') || document.scrollingElement;
+    if (!pageScroller) return;
+
+    event.preventDefault();
+    pageScroller.scrollTop += event.deltaY;
+  }, []);
+
   const fetchWhatsAppConfig = useCallback(async ({ quiet = false } = {}) => {
     try {
       const response = await whatsappAPI.getConfig();
@@ -285,7 +301,7 @@ export default function LiveChat() {
               ))}
             </div>
           </div>
-          <div className="conversation-list min-h-0 flex-1 scroll-pb-8 overflow-y-auto">
+          <div onWheel={passConversationScrollToPage} className="conversation-list min-h-0 flex-1 scroll-pb-8 overflow-y-auto">
             {loading ? (
               <div className="flex h-44 items-center justify-center"><Spinner /></div>
             ) : inbox.length === 0 ? (
