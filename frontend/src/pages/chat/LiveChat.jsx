@@ -285,28 +285,33 @@ export default function LiveChat() {
               ))}
             </div>
           </div>
-          <div className="conversation-list min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="conversation-list min-h-0 flex-1 scroll-pb-8 overflow-y-auto">
             {loading ? (
               <div className="flex h-44 items-center justify-center"><Spinner /></div>
             ) : inbox.length === 0 ? (
               <EmptyState title="No conversations" copy="Customer replies will appear here." />
-            ) : inbox.map((item) => (
-              <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`conversation-row flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-100' : 'hover:bg-white'}`}>
-                <Avatar name={item.name} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <b className="truncate text-sm text-slate-950">{item.name || item.phone}</b>
-                    <small className="shrink-0 text-[10px] font-bold text-slate-400">{formatListTime(item.lastMessage?.at)}</small>
-                  </span>
-                  <span className="mt-1 block truncate text-xs font-medium text-slate-500">{item.lastMessage?.text || item.phone}</span>
-                  <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <StatusBadge status={item.status} />
-                    {item.messageCount ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">{item.messageCount} msgs</span> : null}
-                    {item.lastMessage?.from !== 'school' ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">reply</span> : null}
-                  </span>
-                </span>
-              </button>
-            ))}
+            ) : (
+              <>
+                {inbox.map((item) => (
+                  <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`conversation-row flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-100' : 'hover:bg-white'}`}>
+                    <Avatar name={item.name} />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <b className="truncate text-sm text-slate-950">{item.name || item.phone}</b>
+                        <small className="shrink-0 text-[10px] font-bold text-slate-400">{formatListTime(item.lastMessage?.at)}</small>
+                      </span>
+                      <span className="mt-1 block truncate text-xs font-medium text-slate-500">{item.lastMessage?.text || item.phone}</span>
+                      <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <StatusBadge status={item.status} />
+                        {item.messageCount ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 ring-1 ring-slate-200">{item.messageCount} msgs</span> : null}
+                        {item.lastMessage?.from !== 'school' ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">reply</span> : null}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+                <div className="h-12" aria-hidden="true" />
+              </>
+            )}
           </div>
         </aside>
 
@@ -378,6 +383,11 @@ export default function LiveChat() {
           scrollbar-gutter: stable;
           scrollbar-width: thin;
           scrollbar-color: rgba(7,94,84,.34) transparent;
+        }
+        .conversation-list {
+          scroll-behavior: smooth;
+          overscroll-behavior-y: auto;
+          -webkit-overflow-scrolling: touch;
         }
         .chat-scroll-area {
           -webkit-overflow-scrolling: touch;
