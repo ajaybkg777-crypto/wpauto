@@ -256,8 +256,8 @@ export default function LiveChat() {
         <MetricCard label="Reply Window" value={canReply ? 'Open' : 'Limited'} detail={lastInboundAt ? formatRelative(lastInboundAt) : 'No inbound message'} icon={ClockIcon} tone={canReply ? 'emerald' : 'amber'} />
       </section>
 
-      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[340px_minmax(0,1fr)_320px]">
-        <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
+      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] lg:grid-cols-[300px_minmax(0,1fr)_280px] xl:grid-cols-[340px_minmax(0,1fr)_310px]">
+        <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 lg:border-b-0 lg:border-r">
           <div className="border-b border-slate-200 p-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-bold text-slate-950">Conversations</p>
@@ -336,7 +336,7 @@ export default function LiveChat() {
           )}
         </main>
 
-        <aside className="hidden h-full min-h-0 overflow-hidden border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
+        <aside className="hidden h-full min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50/70 p-3 lg:flex xl:p-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
             <p className="mt-1 truncate text-sm font-bold text-slate-950">{selected?.name || selected?.phone || 'WhatsApp conversation'}</p>
@@ -482,8 +482,8 @@ function MessageSkeleton() {
 
 function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
-    <div className="mx-auto mt-4 w-[248px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
-      <div className="flex h-[492px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
+    <div className="mx-auto mt-3 w-[218px] rounded-[28px] border-[6px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)] xl:w-[238px]">
+      <div className="flex h-[402px] flex-col overflow-hidden rounded-[19px] bg-[#efeae2] xl:h-[452px]">
         <div className="flex h-[50px] shrink-0 items-center gap-2 bg-[#075e54] px-3 text-white">
           <Avatar name={lead?.name || 'W'} small />
           <div className="min-w-0">
