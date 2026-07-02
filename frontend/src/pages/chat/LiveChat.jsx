@@ -338,8 +338,7 @@ export default function LiveChat() {
         </main>
 
         <aside className="hidden h-full min-h-0 overflow-y-auto border-l border-slate-200 bg-slate-50/70 p-4 xl:block">
-          <ContactPanel lead={selected} lastInboundAt={lastInboundAt} canReply={canReply} metaReady={metaReady} />
-          <div className="mt-5 border-t border-slate-200 pt-4">
+          <div>
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Mobile Preview</p>
             <p className="mt-1 text-sm font-bold text-slate-950">WhatsApp conversation</p>
           </div>
@@ -353,6 +352,9 @@ export default function LiveChat() {
             onSubmit={handleSend}
             disabledReason={disabledReason}
           />
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <ContactPanel lead={selected} lastInboundAt={lastInboundAt} canReply={canReply} metaReady={metaReady} />
+          </div>
         </aside>
       </section>
       <style>{`
@@ -483,8 +485,8 @@ function MessageSkeleton() {
 
 function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
-    <div className="mx-auto mt-4 w-[260px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
-      <div className="flex h-[560px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
+    <div className="mx-auto mt-4 w-[248px] rounded-[30px] border-[7px] border-slate-900 bg-slate-900 p-1 shadow-[0_18px_40px_rgba(15,23,42,.18)]">
+      <div className="flex h-[492px] flex-col overflow-hidden rounded-[20px] bg-[#efeae2]">
         <div className="flex h-[50px] shrink-0 items-center gap-2 bg-[#075e54] px-3 text-white">
           <Avatar name={lead?.name || 'W'} small />
           <div className="min-w-0">
