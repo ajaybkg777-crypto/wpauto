@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   ArrowPathIcon,
@@ -43,26 +43,59 @@ export default function LiveChat() {
   const [inboxMeta, setInboxMeta] = useState({ total: 0, windowDays: 7 });
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const timelineRef = useRef(null);
   const phoneTimelineRef = useRef(null);
+  const inboxRequestRef = useRef(0);
+  const conversationRequestRef = useRef(0);
+  const latestTimelineCountRef = useRef(0);
+  const previousSelectedIdRef = useRef('');
+  const shouldStickToBottomRef = useRef(true);
 
-  const fetchInbox = async ({ quiet = false } = {}) => {
+  const scrollTimelinesToBottom = useCallback((behavior = 'auto') => {
+    window.requestAnimationFrame(() => {
+      for (const ref of [timelineRef, phoneTimelineRef]) {
+        if (ref.current) {
+          ref.current.scrollTo({ top: ref.current.scrollHeight, behavior });
+        }
+      }
+    });
+  }, []);
+
+  const updateStickiness = useCallback(() => {
+    const node = timelineRef.current;
+    if (!node) return;
+    const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom < 96;
+    if (distanceFromBottom < 96) setShowJumpToLatest(false);
+  }, []);
+
+  const fetchWhatsAppConfig = useCallback(async ({ quiet = false } = {}) => {
+    try {
+      const response = await whatsappAPI.getConfig();
+      setWhatsapp(response.data.data || {});
+    } catch (error) {
+      if (!quiet) toast.error(error.response?.data?.message || 'Could not load WhatsApp setup');
+    }
+  }, []);
+
+  const fetchInbox = useCallback(async ({ quiet = false } = {}) => {
+    const requestId = inboxRequestRef.current + 1;
+    inboxRequestRef.current = requestId;
     if (!quiet) setLoading(true);
     try {
-      const [inboxResponse, whatsappResponse] = await Promise.all([
-        chatAPI.getInbox({ search, status: statusFilter, limit: 100, days: 7 }),
-        whatsappAPI.getConfig()
-      ]);
+      const inboxResponse = await chatAPI.getInbox({ search, status: statusFilter, limit: 100, days: 7 });
+      if (requestId !== inboxRequestRef.current) return;
       const rows = inboxResponse.data.data || [];
       setInbox(rows);
       setInboxMeta({
         total: inboxResponse.data.total ?? rows.length,
         windowDays: inboxResponse.data.windowDays || 7
       });
-      setWhatsapp(whatsappResponse.data.data || {});
       setSelectedId((current) => {
         if (current && rows.some((row) => row._id === current)) return current;
         return rows[0]?._id || '';
@@ -71,32 +104,44 @@ export default function LiveChat() {
     } catch (error) {
       if (!quiet) toast.error(error.response?.data?.message || 'Could not load live chat');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === inboxRequestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  };
+  }, [search, statusFilter]);
 
-  const fetchConversation = async (leadId, { quiet = false } = {}) => {
+  const fetchConversation = useCallback(async (leadId, { quiet = false } = {}) => {
     if (!leadId) {
       setConversation({ lead: null, timeline: [] });
       return;
     }
+    const requestId = conversationRequestRef.current + 1;
+    conversationRequestRef.current = requestId;
+    if (!quiet) setConversationLoading(true);
     try {
       const response = await chatAPI.getConversation(leadId, { days: 7 });
+      if (requestId !== conversationRequestRef.current) return;
       setConversation(response.data.data || { lead: null, timeline: [] });
     } catch (error) {
       if (!quiet) toast.error(error.response?.data?.message || 'Could not load conversation');
+    } finally {
+      if (requestId === conversationRequestRef.current) setConversationLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => fetchInbox(), 250);
     return () => window.clearTimeout(timer);
-  }, [search, statusFilter]);
+  }, [fetchInbox]);
+
+  useEffect(() => {
+    fetchWhatsAppConfig();
+  }, [fetchWhatsAppConfig]);
 
   useEffect(() => {
     fetchConversation(selectedId);
-  }, [selectedId]);
+  }, [fetchConversation, selectedId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -105,17 +150,37 @@ export default function LiveChat() {
       if (selectedId) void fetchConversation(selectedId, { quiet: true });
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [selectedId, search, statusFilter]);
+  }, [fetchConversation, fetchInbox, selectedId]);
 
   useEffect(() => {
-    for (const ref of [timelineRef, phoneTimelineRef]) {
-      if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+    const nextCount = conversation.timeline?.length || 0;
+    const selectedChanged = previousSelectedIdRef.current !== selectedId;
+    const countIncreased = nextCount > latestTimelineCountRef.current;
+
+    if (selectedChanged) {
+      previousSelectedIdRef.current = selectedId;
+      shouldStickToBottomRef.current = true;
+      latestTimelineCountRef.current = nextCount;
+      scrollTimelinesToBottom();
+      setShowJumpToLatest(false);
+      return;
     }
-  }, [conversation.timeline?.length, selectedId]);
+
+    latestTimelineCountRef.current = nextCount;
+
+    if (shouldStickToBottomRef.current) {
+      scrollTimelinesToBottom();
+      setShowJumpToLatest(false);
+      return;
+    }
+
+    if (countIncreased) setShowJumpToLatest(true);
+  }, [conversation.timeline?.length, scrollTimelinesToBottom, selectedId]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     await Promise.all([
+      fetchWhatsAppConfig({ quiet: true }),
       fetchInbox({ quiet: true }),
       fetchConversation(selectedId, { quiet: true })
     ]);
@@ -135,6 +200,7 @@ export default function LiveChat() {
         fetchConversation(selectedId, { quiet: true }),
         fetchInbox({ quiet: true })
       ]);
+      scrollTimelinesToBottom('smooth');
       toast.success('Message sent');
     } catch (error) {
       toast.error(error.response?.data?.message || 'Message could not be sent');
@@ -191,7 +257,7 @@ export default function LiveChat() {
         <MetricCard label="Reply Window" value={canReply ? 'Open' : 'Limited'} detail={lastInboundAt ? formatRelative(lastInboundAt) : 'No inbound message'} icon={ClockIcon} tone={canReply ? 'emerald' : 'amber'} />
       </section>
 
-      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[330px_minmax(0,1fr)_360px]">
+      <section className="live-chat-shell grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,43,99,.08)] xl:grid-cols-[340px_minmax(0,1fr)_340px]">
         <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/70 xl:border-b-0 xl:border-r">
           <div className="border-b border-slate-200 p-4">
             <div className="flex items-center justify-between gap-3">
@@ -220,13 +286,13 @@ export default function LiveChat() {
               ))}
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="conversation-list min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {loading ? (
               <div className="flex h-44 items-center justify-center"><Spinner /></div>
             ) : inbox.length === 0 ? (
               <EmptyState title="No conversations" copy="Customer replies will appear here." />
             ) : inbox.map((item) => (
-              <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-100' : 'hover:bg-white'}`}>
+              <button key={item._id} type="button" onClick={() => setSelectedId(item._id)} className={`conversation-row flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition ${selectedId === item._id ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-100' : 'hover:bg-white'}`}>
                 <Avatar name={item.name} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
@@ -245,20 +311,25 @@ export default function LiveChat() {
           </div>
         </aside>
 
-        <main className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#efeae2]">
+        <main className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-[#efeae2]">
           {selected ? (
             <>
-              <ChatHeader lead={selected} />
+              <ChatHeader lead={selected} conversationLoading={conversationLoading} />
               {disabledReason && (
                 <div className="flex items-start gap-2 border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
                   <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>{disabledReason}</span>
                 </div>
               )}
-              <div ref={timelineRef} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
+              <div ref={timelineRef} onScroll={updateStickiness} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
                 <DateChip />
-                <MessageList messages={timeline} />
+                {conversationLoading && !timeline.length ? <MessageSkeleton /> : <MessageList messages={timeline} />}
               </div>
+              {showJumpToLatest && (
+                <button type="button" onClick={() => scrollTimelinesToBottom('smooth')} className="absolute bottom-[76px] left-1/2 z-20 -translate-x-1/2 rounded-full bg-slate-950/90 px-3 py-2 text-xs font-bold text-white shadow-lg transition hover:bg-slate-800">
+                  New messages
+                </button>
+              )}
               <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} disabledReason={disabledReason} />
             </>
           ) : (
@@ -307,9 +378,19 @@ export default function LiveChat() {
             #efeae2;
           background-size: 18px 18px;
         }
-        .chat-scroll-area {
+        .conversation-list,
+        .chat-scroll-area,
+        .phone-scroll {
           scrollbar-gutter: stable;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(7,94,84,.34) transparent;
+        }
+        .chat-scroll-area {
           -webkit-overflow-scrolling: touch;
+        }
+        .conversation-row {
+          content-visibility: auto;
+          contain-intrinsic-size: 74px;
         }
         @media (max-width: 1279px) {
           .live-chat-shell {
@@ -326,7 +407,7 @@ export default function LiveChat() {
   );
 }
 
-function ChatHeader({ lead }) {
+function ChatHeader({ lead, conversationLoading = false }) {
   return (
     <div className="flex h-[72px] shrink-0 items-center justify-between gap-4 border-b border-black/5 bg-white/90 px-4 backdrop-blur">
       <div className="flex min-w-0 items-center gap-3">
@@ -336,20 +417,30 @@ function ChatHeader({ lead }) {
           <p className="mt-0.5 truncate text-xs font-semibold text-emerald-700">{lead.phone}</p>
         </div>
       </div>
-      <PhoneIcon className="h-5 w-5 text-slate-500" />
+      <div className="flex items-center gap-3">
+        {conversationLoading && <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_6px_rgba(16,185,129,.14)]" />}
+        <PhoneIcon className="h-5 w-5 text-slate-500" />
+      </div>
     </div>
   );
 }
 
 function Composer({ message, setMessage, sending, onSubmit, disabledReason = '' }) {
   return (
-    <form onSubmit={onSubmit} className="sticky bottom-0 z-10 flex shrink-0 gap-3 border-t border-black/5 bg-white/95 p-3 shadow-[0_-10px_24px_rgba(15,23,42,.08)] backdrop-blur">
-      <input
+    <form onSubmit={onSubmit} className="sticky bottom-0 z-10 flex shrink-0 items-end gap-3 border-t border-black/5 bg-white/95 p-3 shadow-[0_-10px_24px_rgba(15,23,42,.08)] backdrop-blur">
+      <textarea
         value={message}
         onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
         disabled={Boolean(disabledReason)}
         placeholder={disabledReason || 'Type a WhatsApp message...'}
-        className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+        rows={1}
+        className="max-h-28 min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold leading-5 outline-none placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
       />
       <button type="submit" disabled={Boolean(disabledReason) || !message.trim() || sending} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#075e54] text-white transition hover:bg-[#064e45] disabled:cursor-not-allowed disabled:opacity-40" title="Send message">
         {sending ? <Spinner small /> : <PaperAirplaneIcon className="h-5 w-5" />}
@@ -358,7 +449,7 @@ function Composer({ message, setMessage, sending, onSubmit, disabledReason = '' 
   );
 }
 
-function MessageList({ messages = [], compact = false }) {
+const MessageList = memo(function MessageList({ messages = [], compact = false }) {
   if (!messages.length) return <p className="py-12 text-center text-xs font-bold text-slate-500">No messages yet</p>;
   return messages.map((item, index) => (
     <div key={item.messageId || `${item.timestamp}-${index}`} className={`flex ${item.from === 'school' ? 'justify-end' : 'justify-start'}`}>
@@ -376,6 +467,18 @@ function MessageList({ messages = [], compact = false }) {
       </div>
     </div>
   ));
+});
+
+function MessageSkeleton() {
+  return (
+    <div className="space-y-3">
+      {[0, 1, 2, 3].map((item) => (
+        <div key={item} className={`flex ${item % 2 ? 'justify-end' : 'justify-start'}`}>
+          <div className={`h-14 animate-pulse rounded-xl bg-white/70 shadow-sm ${item % 2 ? 'w-48 bg-emerald-100/70' : 'w-56'}`} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending, onSubmit, disabledReason = '' }) {
@@ -389,7 +492,7 @@ function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending,
             <p className="truncate text-[9px] text-white/70">{lead?.phone || 'WhatsApp Business'}</p>
           </div>
         </div>
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
+        <div ref={scrollRef} className="phone-scroll min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
           <DateChip compact />
           <MessageList messages={messages} compact />
         </div>
