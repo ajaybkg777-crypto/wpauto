@@ -19,6 +19,13 @@ const normalizeContactPhone = (value = '') => {
   return digits.length >= 8 && digits.length <= 15 ? digits : '';
 };
 
+const getPhoneAliases = (phone = '') => {
+  const normalized = normalizeContactPhone(phone);
+  const aliases = new Set([normalized].filter(Boolean));
+  if (normalized.startsWith('91') && normalized.length === 12) aliases.add(normalized.slice(2));
+  return [...aliases];
+};
+
 const buildLeadQuery = (schoolId, filters = {}) => {
   const { status, source, search, tag } = filters;
   const query = { schoolId };
@@ -116,7 +123,18 @@ exports.getLead = async (req, res) => {
 exports.createLead = async (req, res) => {
   try {
     const { name, phone, email, source, status, notes, tags } = req.body;
-    const existingLead = await Lead.findOne({ schoolId: req.schoolId, phone });
+    const normalizedPhone = normalizeContactPhone(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid phone number with country code'
+      });
+    }
+
+    const existingLead = await Lead.findOne({
+      schoolId: req.schoolId,
+      phone: { $in: getPhoneAliases(normalizedPhone) }
+    });
     if (!existingLead) {
       await assertCanCreateContacts(req.schoolId, 1);
     }
@@ -124,7 +142,7 @@ exports.createLead = async (req, res) => {
     const lead = existingLead || await Lead.create({
         schoolId: req.schoolId,
         name,
-        phone,
+        phone: normalizedPhone,
         email,
         source: source || 'manual',
         status: status || 'new',
@@ -171,9 +189,31 @@ exports.updateLead = async (req, res) => {
       });
     }
 
+    const normalizedPhone = phone ? normalizeContactPhone(phone) : lead.phone;
+    if (phone && !normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid phone number with country code'
+      });
+    }
+
+    if (normalizedPhone && normalizedPhone !== lead.phone) {
+      const duplicate = await Lead.findOne({
+        schoolId: req.schoolId,
+        _id: { $ne: lead._id },
+        phone: { $in: getPhoneAliases(normalizedPhone) }
+      }).select('_id');
+      if (duplicate) {
+        return res.status(409).json({
+          success: false,
+          message: 'Another contact already uses this phone number'
+        });
+      }
+    }
+
     lead = await Lead.findByIdAndUpdate(
       req.params.id,
-      { name, phone, email, status, notes, tags, assignedTo, nextFollowUp },
+      { name, phone: normalizedPhone, email, status, notes, tags, assignedTo, nextFollowUp },
       { new: true, runValidators: true }
     );
 
@@ -403,10 +443,8 @@ exports.importLeads = async (req, res) => {
 // @access  Private
 exports.exportLeads = async (req, res) => {
   try {
-    const { status } = req.query;
-    
-    const query = { schoolId: req.schoolId };
-    if (status) query.status = status;
+    const { status, source, search, tag } = req.query;
+    const query = buildLeadQuery(req.schoolId, { status, source, search, tag });
 
     const leads = await Lead.find(query).sort({ createdAt: -1 });
 
