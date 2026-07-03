@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { leadAPI, whatsappAPI } from '../../services/api';
 import toast from 'react-hot-toast';
@@ -26,6 +26,7 @@ export default function Leads() {
   const [whatsapp, setWhatsapp] = useState({});
   const [loading, setLoading] = useState(true);
   const [metaLoading, setMetaLoading] = useState(true);
+  const [stats, setStats] = useState({});
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 });
   const [filters, setFilters] = useState({
     search: searchParams.get('search') || '',
@@ -37,6 +38,8 @@ export default function Leads() {
   const [editingLead, setEditingLead] = useState(null);
   const [formData, setFormData] = useState({ name: '', phone: '', email: '', status: 'new', tags: '', notes: '' });
   const [importReport, setImportReport] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const requestRef = useRef(0);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -47,9 +50,16 @@ export default function Leads() {
 
   useEffect(() => {
     fetchMetaStatus();
+    fetchStats();
   }, []);
 
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [leads]);
+
   const fetchLeads = async () => {
+    const requestId = requestRef.current + 1;
+    requestRef.current = requestId;
     setLoading(true);
     try {
       const params = {
@@ -61,6 +71,7 @@ export default function Leads() {
         ...(filters.search && { search: filters.search })
       };
       const response = await leadAPI.getLeads(params);
+      if (requestId !== requestRef.current) return;
       setLeads(response.data.data || []);
       setPagination({
         page: response.data.page || 1,
@@ -76,7 +87,16 @@ export default function Leads() {
     } catch (error) {
       toast.error('Failed to fetch leads');
     } finally {
-      setLoading(false);
+      if (requestId === requestRef.current) setLoading(false);
+    }
+  };
+
+  const fetchStats = async () => {
+    try {
+      const response = await leadAPI.getStats();
+      setStats(response.data.data || {});
+    } catch (error) {
+      setStats({});
     }
   };
 
@@ -109,7 +129,12 @@ export default function Leads() {
 
   const handleExport = async () => {
     try {
-      const response = await leadAPI.exportLeads({ status: filters.status });
+      const response = await leadAPI.exportLeads({
+        ...(filters.status && { status: filters.status }),
+        ...(filters.source && { source: filters.source }),
+        ...(filters.tag && { tag: filters.tag }),
+        ...(filters.search && { search: filters.search })
+      });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -170,7 +195,7 @@ export default function Leads() {
           ? ` (${result.skipped || 0} skipped, ${result.duplicates || 0} duplicates, ${result.errors || 0} errors)`
           : '';
         toast.success(`${result.imported || leads.length} contacts imported${skippedText}`);
-        fetchLeads();
+        await Promise.all([fetchLeads(), fetchStats()]);
       } catch (error) {
         toast.error(error.response?.data?.message || 'Failed to import CSV');
       } finally {
@@ -199,7 +224,7 @@ export default function Leads() {
       setShowModal(false);
       setEditingLead(null);
       setFormData({ name: '', phone: '', email: '', status: 'new', tags: '', notes: '' });
-      fetchLeads();
+      await Promise.all([fetchLeads(), fetchStats()]);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to save lead');
     }
@@ -223,35 +248,37 @@ export default function Leads() {
     try {
       await leadAPI.deleteLead(id);
       toast.success('Lead deleted successfully');
-      fetchLeads();
+      await Promise.all([fetchLeads(), fetchStats()]);
     } catch (error) {
       toast.error('Failed to delete lead');
     }
   };
 
   const handleBulkDelete = async () => {
-    if (!selectedFilterCount) {
+    if (!selectedIds.length && !selectedFilterCount) {
       toast.error('Apply at least one filter before bulk delete');
       return;
     }
 
-    const matched = pagination.total || leads.length;
+    const matched = selectedIds.length || pagination.total || leads.length;
     const filterText = Object.entries(filters)
       .filter(([, value]) => value)
       .map(([key, value]) => `${key}: ${value}`)
-      .join(', ');
+      .join(', ') || 'selected rows';
 
     if (!confirm(`Delete ${matched} filtered contact(s) from database?\n\nFilters: ${filterText}\n\nThis cannot be undone.`)) return;
 
     try {
       const response = await leadAPI.bulkDeleteLeads({
         ...filters,
+        ids: selectedIds,
         confirm: true
       });
       const deleted = response.data?.data?.deleted || 0;
       toast.success(`${deleted} contact(s) deleted from DB`);
+      setSelectedIds([]);
       setPagination((current) => ({ ...current, page: 1 }));
-      fetchLeads();
+      await Promise.all([fetchLeads(), fetchStats()]);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to bulk delete contacts');
     }
@@ -279,9 +306,21 @@ export default function Leads() {
   const verified = whatsapp?.businessVerificationStatus === 'verified'
     || whatsapp?.accountReviewStatus === 'APPROVED';
   const contactsWithPhone = leads.filter((lead) => lead.phone).length;
-  const interestedCount = leads.filter((lead) => lead.status === 'interested').length;
+  const interestedCount = stats.interested ?? leads.filter((lead) => lead.status === 'interested').length;
+  const newCount = stats.new ?? leads.filter((lead) => lead.status === 'new').length;
+  const followUpCount = stats.follow_up ?? leads.filter((lead) => lead.status === 'follow_up').length;
   const whatsappSourceCount = leads.filter((lead) => lead.source === 'whatsapp_inbound').length;
   const selectedFilterCount = Object.values(filters).filter(Boolean).length;
+  const allPageSelected = leads.length > 0 && selectedIds.length === leads.length;
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const toggleLeadSelection = (leadId) => {
+    setSelectedIds((current) => current.includes(leadId)
+      ? current.filter((id) => id !== leadId)
+      : [...current, leadId]);
+  };
+  const togglePageSelection = () => {
+    setSelectedIds(allPageSelected ? [] : leads.map((lead) => lead._id));
+  };
   const quickSegments = [
     { label: 'Interested', key: 'status', value: 'interested' },
     { label: 'New Leads', key: 'status', value: 'new' },
@@ -331,8 +370,8 @@ export default function Leads() {
                 Contacts are loaded from your database. Meta status is checked live so broadcasts and automation readiness stay visible.
               </p>
               <div className="mt-7 grid grid-cols-1 gap-3 md:grid-cols-3">
-                <MetricTile label="Total Contacts" value={pagination.total || leads.length} />
-                <MetricTile label="Page Phones" value={contactsWithPhone} />
+                <MetricTile label="Matched Contacts" value={pagination.total || leads.length} />
+                <MetricTile label="New Contacts" value={newCount} />
                 <MetricTile label="WhatsApp Source" value={whatsappSourceCount} />
               </div>
             </div>
@@ -366,7 +405,7 @@ export default function Leads() {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <SummaryCard label="Interested" value={interestedCount} icon={CheckCircleIcon} tone="bg-emerald-50 text-emerald-700 ring-emerald-100" />
-        <SummaryCard label="Phone Ready" value={contactsWithPhone} icon={PhoneIcon} tone="bg-blue-50 text-blue-700 ring-blue-100" />
+        <SummaryCard label="Follow Up" value={followUpCount} icon={ChatBubbleLeftRightIcon} tone="bg-blue-50 text-blue-700 ring-blue-100" />
         <SummaryCard label="Active Filters" value={selectedFilterCount} icon={FunnelIcon} tone="bg-amber-50 text-amber-700 ring-amber-100" />
       </div>
 
@@ -508,13 +547,18 @@ export default function Leads() {
         <div className="flex flex-col gap-3 border-b border-gray-100 bg-white px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-lg font-bold text-gray-950">Contacts Database</h2>
-            <p className="text-sm text-gray-600">{pagination.total || 0} contacts synced from DB</p>
+            <p className="text-sm text-gray-600">{pagination.total || 0} contacts synced from DB | {contactsWithPhone} phone-ready on this page</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {selectedFilterCount > 0 && (
+            {selectedIds.length > 0 && (
+              <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
+                {selectedIds.length} selected
+              </span>
+            )}
+            {(selectedFilterCount > 0 || selectedIds.length > 0) && (
               <button type="button" onClick={handleBulkDelete} className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 transition hover:bg-rose-100">
                 <TrashIcon className="h-4 w-4" />
-                Delete {pagination.total || leads.length} filtered
+                Delete {selectedIds.length || pagination.total || leads.length}
               </button>
             )}
             <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
@@ -527,6 +571,15 @@ export default function Leads() {
           <table className="w-full">
             <thead className="table-header">
               <tr>
+                <th className="px-6 py-4">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    onChange={togglePageSelection}
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                    aria-label="Select all contacts on this page"
+                  />
+                </th>
                 <th className="px-6 py-4">Contact</th>
                 <th className="px-6 py-4">Phone</th>
                 <th className="px-6 py-4">Status</th>
@@ -540,19 +593,28 @@ export default function Leads() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center">
+                  <td colSpan={9} className="px-6 py-12 text-center">
                     <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
                   </td>
                 </tr>
               ) : leads.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-gray-500">
                     No leads found
                   </td>
                 </tr>
               ) : (
                 leads.map((lead) => (
                   <tr key={lead._id} className="hover:bg-emerald-50/70">
+                    <td className="px-6 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIdSet.has(lead._id)}
+                        onChange={() => toggleLeadSelection(lead._id)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                        aria-label={`Select ${lead.name || lead.phone}`}
+                      />
+                    </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-primary text-sm font-bold text-white">
@@ -679,6 +741,7 @@ export default function Leads() {
                   <option value="interested">Interested</option>
                   <option value="pending">Pending</option>
                   <option value="not_interested">Not Interested</option>
+                  <option value="follow_up">Follow Up</option>
                   <option value="converted">Converted</option>
                 </select>
               </div>
