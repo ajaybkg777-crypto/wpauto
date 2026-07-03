@@ -22,6 +22,35 @@ const formatListTime = (value) => value
   ? new Date(value).toLocaleDateString([], { day: '2-digit', month: 'short' })
   : '';
 
+const isSameDate = (left, right) => left.getFullYear() === right.getFullYear()
+  && left.getMonth() === right.getMonth()
+  && left.getDate() === right.getDate();
+
+const formatDateChip = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (isSameDate(date, today)) return 'Today';
+  if (isSameDate(date, yesterday)) return 'Yesterday';
+  return date.toLocaleDateString([], {
+    day: '2-digit',
+    month: 'short',
+    ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {})
+  });
+};
+
+const getDateKey = (value) => {
+  if (!value) return 'unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'unknown';
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+};
+
 const statusOptions = [
   { label: 'All', value: '' },
   { label: 'New', value: 'new' },
@@ -342,7 +371,6 @@ export default function LiveChat() {
                 </div>
               )}
               <div ref={timelineRef} onScroll={updateStickiness} className="chat-scroll-area min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-4 sm:p-6">
-                <DateChip />
                 {conversationLoading && !timeline.length ? <MessageSkeleton /> : <MessageList messages={timeline} />}
                 <Composer message={message} setMessage={setMessage} sending={sending} onSubmit={handleSend} disabledReason={disabledReason} inline />
               </div>
@@ -471,22 +499,33 @@ function Composer({ message, setMessage, sending, onSubmit, disabledReason = '',
 
 const MessageList = memo(function MessageList({ messages = [], compact = false }) {
   if (!messages.length) return <p className="py-12 text-center text-xs font-bold text-slate-500">No messages yet</p>;
-  return messages.map((item, index) => (
-    <div key={item.messageId || `${item.timestamp}-${index}`} className={`flex ${item.from === 'school' ? 'justify-end' : 'justify-start'}`}>
-      <div className={`${compact ? 'max-w-[88%] px-2.5 py-2 text-[10px]' : 'max-w-[82%] px-3 py-2 text-sm sm:max-w-[70%]'} rounded-xl shadow-sm ${item.from === 'school' ? 'bg-[#d9fdd3] text-slate-900' : 'bg-white text-slate-900'}`}>
-        <p className="whitespace-pre-wrap break-words leading-5">{item.message}</p>
-        <p className={`mt-1 flex items-center justify-end gap-1 text-right font-semibold text-slate-400 ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
-          {formatTime(item.timestamp)}
-          {item.from === 'school' && (
-            <>
-              <CheckIcon className={`h-3 w-3 ${item.status === 'failed' ? 'text-rose-500' : 'text-emerald-600'}`} />
-              {!compact && <span className="capitalize">{String(item.status || 'sent')}</span>}
-            </>
-          )}
-        </p>
+  let previousDateKey = '';
+
+  return messages.map((item, index) => {
+    const dateKey = getDateKey(item.timestamp);
+    const showDate = dateKey !== previousDateKey;
+    previousDateKey = dateKey;
+
+    return (
+      <div key={item.messageId || `${item.timestamp}-${index}`} className="space-y-2">
+        {showDate && <DateChip value={item.timestamp} compact={compact} />}
+        <div className={`flex ${item.from === 'school' ? 'justify-end' : 'justify-start'}`}>
+          <div className={`${compact ? 'max-w-[88%] px-2.5 py-2 text-[10px]' : 'max-w-[82%] px-3 py-2 text-sm sm:max-w-[70%]'} rounded-xl shadow-sm ${item.from === 'school' ? 'bg-[#d9fdd3] text-slate-900' : 'bg-white text-slate-900'}`}>
+            <p className="whitespace-pre-wrap break-words leading-5">{item.message}</p>
+            <p className={`mt-1 flex items-center justify-end gap-1 text-right font-semibold text-slate-400 ${compact ? 'text-[8px]' : 'text-[10px]'}`}>
+              {formatTime(item.timestamp)}
+              {item.from === 'school' && (
+                <>
+                  <CheckIcon className={`h-3 w-3 ${item.status === 'failed' ? 'text-rose-500' : 'text-emerald-600'}`} />
+                  {!compact && <span className="capitalize">{String(item.status || 'sent')}</span>}
+                </>
+              )}
+            </p>
+          </div>
+        </div>
       </div>
-    </div>
-  ));
+    );
+  });
 });
 
 function MessageSkeleton() {
@@ -513,7 +552,6 @@ function PhonePreview({ lead, messages, scrollRef, message, setMessage, sending,
           </div>
         </div>
         <div ref={scrollRef} className="phone-scroll min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5">
-          <DateChip compact />
           <MessageList messages={messages} compact />
         </div>
         <form onSubmit={onSubmit} className="flex h-[48px] shrink-0 items-center gap-2 border-t border-black/5 bg-white/90 px-2">
@@ -583,8 +621,8 @@ function Avatar({ name = '', small = false }) {
   return <span className={`flex shrink-0 items-center justify-center rounded-full bg-emerald-100 font-bold text-emerald-800 ring-1 ring-emerald-200 ${small ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm'}`}>{String(name || '?').charAt(0).toUpperCase()}</span>;
 }
 
-function DateChip({ compact = false }) {
-  return <p className={`mx-auto w-max rounded-lg bg-white/80 px-2 py-1 font-bold text-slate-500 shadow-sm ${compact ? 'text-[8px]' : 'text-[10px]'}`}>Today</p>;
+function DateChip({ value, compact = false }) {
+  return <p className={`mx-auto w-max rounded-lg bg-white/80 px-2 py-1 font-bold text-slate-500 shadow-sm ${compact ? 'text-[8px]' : 'text-[10px]'}`}>{formatDateChip(value) || 'Conversation'}</p>;
 }
 
 function EmptyState({ title, copy }) {
