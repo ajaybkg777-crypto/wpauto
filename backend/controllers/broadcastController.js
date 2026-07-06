@@ -481,8 +481,19 @@ const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageTy
     .lean();
 };
 
-const findSameBroadcastDelivery = (broadcast, phone) => {
-  return (broadcast.recipients || []).find((recipient) => {
+const findSameBroadcastDelivery = async (broadcastId, phone) => {
+  const broadcast = await Broadcast.findOne({
+    _id: broadcastId,
+    recipients: {
+      $elemMatch: {
+        phone,
+        status: { $in: DELIVERED_STATUSES },
+        messageId: { $exists: true, $ne: '' }
+      }
+    }
+  }).select('recipients');
+
+  return (broadcast?.recipients || []).find((recipient) => {
     if (!recipient.messageId || !DELIVERED_STATUSES.includes(recipient.status)) return false;
     return normalizeWhatsAppPhone(recipient.phone) === phone;
   });
@@ -988,14 +999,7 @@ const processBroadcast = async (broadcastId) => {
     const delayBetweenMessages = readPositiveInt(process.env.BROADCAST_SEND_DELAY_MS, 750, 10000);
     const maxRecipientAttempts = readPositiveInt(process.env.BROADCAST_RECIPIENT_RETRIES, 5, 20);
 
-    const seenPendingPhones = new Set();
-    const pendingRecipients = broadcast.recipients.filter((recipient) => {
-      if (recipient.status !== 'pending') return false;
-      const phone = normalizeWhatsAppPhone(recipient.phone);
-      if (!phone || seenPendingPhones.has(phone)) return false;
-      seenPendingPhones.add(phone);
-      return true;
-    });
+    const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
     let claimedTotal = 0;
 
     for (let i = 0; i < pendingRecipients.length; i += batchSize) {
@@ -1007,6 +1011,14 @@ const processBroadcast = async (broadcastId) => {
           const claim = await Broadcast.updateOne(
             {
               _id: broadcast._id,
+              $nor: [{
+                recipients: {
+                  $elemMatch: {
+                    phone: recipient.phone,
+                    status: { $in: ['processing', ...DELIVERED_STATUSES] }
+                  }
+                }
+              }],
               recipients: {
                 $elemMatch: {
                   phone: recipient.phone,
@@ -1026,6 +1038,31 @@ const processBroadcast = async (broadcastId) => {
           );
 
           if (!claim.modifiedCount) {
+            const duplicate = await findSameBroadcastDelivery(broadcast._id, normalizeWhatsAppPhone(recipient.phone));
+            if (duplicate) {
+              await Broadcast.updateOne(
+                {
+                  _id: broadcast._id,
+                  recipients: {
+                    $elemMatch: {
+                      phone: recipient.phone,
+                      status: 'pending'
+                    }
+                  }
+                },
+                {
+                  $set: buildDuplicateRecipientSet(duplicate),
+                  $unset: {
+                    'recipients.$.error': '',
+                    'recipients.$.errorCode': '',
+                    'recipients.$.errorDetails': '',
+                    'recipients.$.retryable': '',
+                    'recipients.$.failedAt': ''
+                  }
+                }
+              );
+              return { success: true, duplicateSkipped: true };
+            }
             return { skipped: true };
           }
 
@@ -1052,7 +1089,7 @@ const processBroadcast = async (broadcastId) => {
           if (!result) {
             const messageBody = template?.body || broadcast.message;
             const messageType = templateName ? 'template' : mediaUrl ? 'image' : 'text';
-            const sameBroadcastDuplicate = findSameBroadcastDelivery(broadcast, normalizedPhone);
+            const sameBroadcastDuplicate = await findSameBroadcastDelivery(broadcast._id, normalizedPhone);
             const duplicateRecipientSet = sameBroadcastDuplicate
               ? buildDuplicateRecipientSet(sameBroadcastDuplicate)
               : null;
