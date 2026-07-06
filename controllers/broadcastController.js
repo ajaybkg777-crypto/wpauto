@@ -38,6 +38,12 @@ const readPositiveInt = (value, fallback, max = 500) => {
   return Math.min(Math.floor(number), max);
 };
 
+const getDuplicateSuppressionMs = () => readPositiveInt(
+  process.env.BROADCAST_DUPLICATE_SUPPRESSION_MS,
+  24 * 60 * 60 * 1000,
+  7 * 24 * 60 * 60 * 1000
+);
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const runWithConcurrency = async (items, concurrency, worker) => {
@@ -397,6 +403,31 @@ const resolveTemplateVariableValue = (value, recipient, school) => {
     const normalized = normalizedContext[String(key).toLowerCase()];
     return normalized !== undefined ? normalized : '';
   });
+};
+
+const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageType, templateName }) => {
+  if (process.env.BROADCAST_SUPPRESS_RECENT_DUPLICATES === 'false') return null;
+
+  const duplicateWindowMs = getDuplicateSuppressionMs();
+  const query = {
+    schoolId,
+    userNumber: phone,
+    direction: 'outbound',
+    status: { $in: DELIVERED_STATUSES },
+    message: String(message || ''),
+    createdAt: { $gte: new Date(Date.now() - duplicateWindowMs) }
+  };
+
+  if (templateName) {
+    query['rawPayload.templateName'] = templateName;
+  } else {
+    query.messageType = messageType;
+  }
+
+  return Message.findOne(query)
+    .sort({ createdAt: -1 })
+    .select('+rawPayload metaMessageId status sentAt deliveredAt readAt createdAt')
+    .lean();
 };
 
 const ensureMetaReady = async (schoolId) => {
@@ -932,13 +963,63 @@ const processBroadcast = async (broadcastId) => {
             : {};
           const result = !normalizedPhone
             ? invalidRecipientPhoneResult()
-            : templateName
-              ? await whatsappService.sendTemplateMessage(normalizedPhone, templateName, variables)
-              : mediaUrl
-                ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
-                : await whatsappService.sendMessage(normalizedPhone, broadcast.message);
+            : null;
 
-          if (result.success) {
+          if (!result) {
+            const messageBody = template?.body || broadcast.message;
+            const messageType = templateName ? 'template' : mediaUrl ? 'image' : 'text';
+            const recentDuplicate = await findRecentOutboundDuplicate({
+              schoolId: broadcast.schoolId,
+              phone: normalizedPhone,
+              message: messageBody,
+              messageType,
+              templateName
+            });
+
+            if (recentDuplicate) {
+              const sentAt = recentDuplicate.sentAt || recentDuplicate.createdAt || new Date();
+              const recipientSet = {
+                'recipients.$.status': DELIVERED_STATUSES.includes(recentDuplicate.status) ? recentDuplicate.status : 'sent',
+                'recipients.$.messageId': recentDuplicate.metaMessageId,
+                'recipients.$.sentAt': sentAt
+              };
+
+              if (recentDuplicate.deliveredAt) recipientSet['recipients.$.deliveredAt'] = recentDuplicate.deliveredAt;
+              if (recentDuplicate.readAt) recipientSet['recipients.$.readAt'] = recentDuplicate.readAt;
+
+              await Broadcast.updateOne(
+                {
+                  _id: broadcast._id,
+                  recipients: {
+                    $elemMatch: {
+                      phone: recipient.phone,
+                      status: 'processing'
+                    }
+                  }
+                },
+                {
+                  $set: recipientSet,
+                  $unset: {
+                    'recipients.$.error': '',
+                    'recipients.$.errorCode': '',
+                    'recipients.$.errorDetails': '',
+                    'recipients.$.retryable': '',
+                    'recipients.$.failedAt': ''
+                  }
+                }
+              );
+
+              return { success: true, duplicateSkipped: true };
+            }
+          }
+
+          const sendResult = result || (templateName
+            ? await whatsappService.sendTemplateMessage(normalizedPhone, templateName, variables)
+            : mediaUrl
+              ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
+              : await whatsappService.sendMessage(normalizedPhone, broadcast.message));
+
+          if (sendResult.success) {
             const sentAt = new Date();
             await Broadcast.updateOne(
               {
@@ -953,7 +1034,7 @@ const processBroadcast = async (broadcastId) => {
               {
                 $set: {
                   'recipients.$.status': 'sent',
-                  'recipients.$.messageId': result.messageId,
+                  'recipients.$.messageId': sendResult.messageId,
                   'recipients.$.sentAt': sentAt
                 },
                 $unset: {
@@ -968,7 +1049,7 @@ const processBroadcast = async (broadcastId) => {
 
             messageWrites.push({
               updateOne: {
-                filter: { metaMessageId: result.messageId },
+                filter: { metaMessageId: sendResult.messageId },
                 update: {
                   $set: compactMessageRecord({
                     schoolId: broadcast.schoolId,
@@ -979,7 +1060,7 @@ const processBroadcast = async (broadcastId) => {
                     direction: 'outbound',
                     message: template?.body || broadcast.message,
                     messageType: templateName ? 'template' : mediaUrl ? 'image' : 'text',
-                    metaMessageId: result.messageId,
+                    metaMessageId: sendResult.messageId,
                     status: 'sent',
                     sentAt,
                     rawPayload: {
@@ -1008,7 +1089,7 @@ const processBroadcast = async (broadcastId) => {
               }
             },
             {
-              $set: buildRecipientFailureSet(result, attemptNumber, maxRecipientAttempts)
+              $set: buildRecipientFailureSet(sendResult, attemptNumber, maxRecipientAttempts)
             }
           );
           return { success: false };
