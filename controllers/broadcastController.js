@@ -38,6 +38,8 @@ const readPositiveInt = (value, fallback, max = 500) => {
   return Math.min(Math.floor(number), max);
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const runWithConcurrency = async (items, concurrency, worker) => {
   const results = new Array(items.length);
   let cursor = 0;
@@ -60,6 +62,34 @@ const countRecipientStatuses = (recipients = []) => ({
   readCount: recipients.filter((item) => item.status === 'read').length,
   failedCount: recipients.filter((item) => item.status === 'failed').length
 });
+
+const compactSetUpdate = (update = {}) => Object.fromEntries(
+  Object.entries(update).filter(([, value]) => value !== undefined)
+);
+
+const invalidRecipientPhoneResult = () => ({
+  success: false,
+  error: 'Invalid WhatsApp phone number. Use country code format, for example 919999999999.',
+  errorCode: 'INVALID_PHONE_NUMBER',
+  retryable: false
+});
+
+const shouldRequeueRecipient = (failure, attemptNumber, maxAttempts) => {
+  return failure?.retryable === true && attemptNumber < maxAttempts;
+};
+
+const buildRecipientFailureSet = (failure, attemptNumber, maxAttempts) => {
+  const requeue = shouldRequeueRecipient(failure, attemptNumber, maxAttempts);
+  return compactSetUpdate({
+    'recipients.$.status': requeue ? 'pending' : 'failed',
+    'recipients.$.error': failure.error || failure.message,
+    'recipients.$.errorCode': failure.errorCode || failure.code,
+    'recipients.$.errorDetails': failure.errorDetails || failure.details,
+    'recipients.$.retryable': failure.retryable,
+    'recipients.$.lastAttemptAt': new Date(),
+    'recipients.$.failedAt': requeue ? undefined : new Date()
+  });
+};
 
 const refreshBroadcastCounters = async (broadcastId, options = {}) => {
   const broadcast = await Broadcast.findById(broadcastId);
@@ -745,6 +775,7 @@ exports.startBroadcast = async (req, res) => {
 exports.resumeBroadcast = async (req, res) => {
   try {
     await ensureMetaReady(req.schoolId);
+    const retryFailed = req.body?.retryFailed === true;
 
     const broadcast = await Broadcast.findOne({
       _id: req.params.id,
@@ -758,22 +789,50 @@ exports.resumeBroadcast = async (req, res) => {
       });
     }
 
+    let retriedFailedCount = 0;
+    if (retryFailed) {
+      broadcast.recipients.forEach((recipient) => {
+        if (recipient.status === 'failed' && recipient.retryable !== false) {
+          recipient.status = 'pending';
+          recipient.error = undefined;
+          recipient.errorCode = undefined;
+          recipient.errorDetails = undefined;
+          recipient.retryable = undefined;
+          recipient.sendAttempts = 0;
+          recipient.lastAttemptAt = undefined;
+          recipient.failedAt = undefined;
+          retriedFailedCount += 1;
+        }
+      });
+    }
+
     const pendingCount = broadcast.recipients.filter((recipient) => recipient.status === 'pending').length;
     if (!pendingCount) {
       return res.status(400).json({
         success: false,
-        message: 'No pending recipients left in this broadcast'
+        message: retryFailed
+          ? 'No failed recipients left to retry in this broadcast'
+          : 'No pending recipients left in this broadcast'
       });
     }
 
     broadcast.status = 'processing';
     broadcast.startedAt = broadcast.startedAt || new Date();
+    if (retryFailed) {
+      const counts = countRecipientStatuses(broadcast.recipients);
+      broadcast.sentCount = counts.sentCount;
+      broadcast.deliveredCount = counts.deliveredCount;
+      broadcast.readCount = counts.readCount;
+      broadcast.failedCount = counts.failedCount;
+    }
     await broadcast.save();
     processBroadcast(broadcast._id);
 
     res.status(200).json({
       success: true,
-      message: `Broadcast resumed for ${pendingCount} pending recipient(s)`,
+      message: retryFailed
+        ? `Retry started for ${retriedFailedCount} failed recipient(s)`
+        : `Broadcast resumed for ${pendingCount} pending recipient(s)`,
       data: broadcast
     });
   } catch (error) {
@@ -815,9 +874,11 @@ const processBroadcast = async (broadcastId) => {
       return;
     }
 
-    const batchSize = readPositiveInt(process.env.BROADCAST_BATCH_SIZE, 200, 500);
-    const sendConcurrency = readPositiveInt(process.env.BROADCAST_SEND_CONCURRENCY, 15, 50);
-    const delayBetweenBatches = readPositiveInt(process.env.BROADCAST_BATCH_DELAY_MS, 250, 10000);
+    const batchSize = readPositiveInt(process.env.BROADCAST_BATCH_SIZE, 50, 500);
+    const sendConcurrency = readPositiveInt(process.env.BROADCAST_SEND_CONCURRENCY, 1, 50);
+    const delayBetweenBatches = readPositiveInt(process.env.BROADCAST_BATCH_DELAY_MS, 3000, 60000);
+    const delayBetweenMessages = readPositiveInt(process.env.BROADCAST_SEND_DELAY_MS, 750, 10000);
+    const maxRecipientAttempts = readPositiveInt(process.env.BROADCAST_RECIPIENT_RETRIES, 5, 20);
 
     const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
     let claimedTotal = 0;
@@ -840,7 +901,11 @@ const processBroadcast = async (broadcastId) => {
             },
             {
               $set: {
-                'recipients.$.status': 'processing'
+                'recipients.$.status': 'processing',
+                'recipients.$.lastAttemptAt': new Date()
+              },
+              $inc: {
+                'recipients.$.sendAttempts': 1
               }
             }
           );
@@ -850,9 +915,7 @@ const processBroadcast = async (broadcastId) => {
           }
 
           const normalizedPhone = normalizeWhatsAppPhone(recipient.phone);
-          if (!normalizedPhone) {
-            throw new Error('Invalid WhatsApp phone number. Use country code format, for example 919999999999.');
-          }
+          const attemptNumber = Number(recipient.sendAttempts || 0) + 1;
           const mediaUrl = getPublicAssetUrl(broadcast.media?.url);
           const templateName = template?.name;
           const customValues = Array.isArray(broadcast.templateVariables)
@@ -867,11 +930,13 @@ const processBroadcast = async (broadcastId) => {
                 headerImageUrl: template.header?.type === 'image' ? mediaUrl : undefined
               }
             : {};
-          const result = templateName
-            ? await whatsappService.sendTemplateMessage(normalizedPhone, templateName, variables)
-            : mediaUrl
-              ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
-              : await whatsappService.sendMessage(normalizedPhone, broadcast.message);
+          const result = !normalizedPhone
+            ? invalidRecipientPhoneResult()
+            : templateName
+              ? await whatsappService.sendTemplateMessage(normalizedPhone, templateName, variables)
+              : mediaUrl
+                ? await whatsappService.sendImageMessage(normalizedPhone, mediaUrl, broadcast.message)
+                : await whatsappService.sendMessage(normalizedPhone, broadcast.message);
 
           if (result.success) {
             const sentAt = new Date();
@@ -890,6 +955,13 @@ const processBroadcast = async (broadcastId) => {
                   'recipients.$.status': 'sent',
                   'recipients.$.messageId': result.messageId,
                   'recipients.$.sentAt': sentAt
+                },
+                $unset: {
+                  'recipients.$.error': '',
+                  'recipients.$.errorCode': '',
+                  'recipients.$.errorDetails': '',
+                  'recipients.$.retryable': '',
+                  'recipients.$.failedAt': ''
                 }
               }
             );
@@ -936,11 +1008,7 @@ const processBroadcast = async (broadcastId) => {
               }
             },
             {
-              $set: {
-                'recipients.$.status': 'failed',
-                'recipients.$.error': result.error,
-                'recipients.$.failedAt': new Date()
-              }
+              $set: buildRecipientFailureSet(result, attemptNumber, maxRecipientAttempts)
             }
           );
           return { success: false };
@@ -956,14 +1024,14 @@ const processBroadcast = async (broadcastId) => {
               }
             },
             {
-              $set: {
-                'recipients.$.status': 'failed',
-                'recipients.$.error': error.message,
-                'recipients.$.failedAt': new Date()
-              }
+              $set: buildRecipientFailureSet(error, Number(recipient.sendAttempts || 0) + 1, maxRecipientAttempts)
             }
           );
           return { success: false };
+        } finally {
+          if (delayBetweenMessages > 0) {
+            await sleep(delayBetweenMessages);
+          }
         }
       });
 
@@ -983,7 +1051,7 @@ const processBroadcast = async (broadcastId) => {
 
       // Delay between batches
       if (i + batchSize < pendingRecipients.length) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+        await sleep(delayBetweenBatches);
       }
     }
 
@@ -1009,8 +1077,16 @@ const processBroadcast = async (broadcastId) => {
     console.error('Broadcast processing error:', error);
     const broadcast = await Broadcast.findById(broadcastId);
     if (broadcast) {
-      broadcast.status = 'failed';
-      await broadcast.save();
+      await Broadcast.updateOne(
+        { _id: broadcast._id },
+        {
+          $set: {
+            status: 'failed',
+            'recipients.$[recipient].status': 'pending'
+          }
+        },
+        { arrayFilters: [{ 'recipient.status': 'processing' }] }
+      );
     }
   } finally {
     activeBroadcasts.delete(workerKey);
@@ -1111,17 +1187,55 @@ exports.getBroadcastStats = async (req, res) => {
 };
 
 exports.processDueScheduledBroadcasts = async () => {
+  const staleProcessingMs = readPositiveInt(process.env.BROADCAST_PROCESSING_STALE_MS, 10 * 60 * 1000, 60 * 60 * 1000);
+  const staleCutoff = new Date(Date.now() - staleProcessingMs);
   const broadcasts = await Broadcast.find({
     $or: [
       { status: 'scheduled', scheduledAt: { $lte: new Date() } },
-      { status: 'processing', 'recipients.status': 'pending' }
+      { status: 'processing', 'recipients.status': 'pending' },
+      {
+        status: 'processing',
+        recipients: {
+          $elemMatch: {
+            status: 'processing',
+            $or: [
+              { lastAttemptAt: { $lte: staleCutoff } },
+              { lastAttemptAt: { $exists: false } }
+            ]
+          }
+        }
+      },
+      { status: 'failed', 'recipients.status': 'pending' }
     ]
   }).select('_id');
 
   for (const broadcast of broadcasts) {
+    const recoverySet = {
+      status: 'processing',
+      startedAt: new Date(),
+      'recipients.$[recipient].status': 'pending'
+    };
+
     await Broadcast.updateOne(
-      { _id: broadcast._id, status: 'scheduled' },
-      { status: 'processing', startedAt: new Date() }
+      { _id: broadcast._id },
+      { $set: recoverySet },
+      {
+        arrayFilters: [{
+          'recipient.status': 'processing',
+          'recipient.lastAttemptAt': { $lte: staleCutoff }
+        }]
+      }
+    );
+
+    await Broadcast.updateOne(
+      { _id: broadcast._id },
+      { $set: recoverySet },
+      {
+        arrayFilters: [{
+          'recipient.status': 'processing',
+          'recipient.lastAttemptAt': { $exists: false }
+        }]
+      }
     );
     processBroadcast(broadcast._id);
   }

@@ -49,6 +49,13 @@ const messageSchema = new mongoose.Schema({
     default: 'received',
     index: true
   },
+  error: String,
+  errorCode: {
+    type: String,
+    index: true
+  },
+  errorDetails: String,
+  retryable: Boolean,
   sentAt: Date,
   deliveredAt: Date,
   readAt: Date,
