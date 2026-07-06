@@ -857,6 +857,12 @@ const handleStatusUpdate = async (payload) => {
         message.errorCode = failure.code;
         message.errorDetails = failure.details;
         message.retryable = failure.retryable;
+      } else if (status !== 'failed') {
+        message.error = undefined;
+        message.errorCode = undefined;
+        message.errorDetails = undefined;
+        message.retryable = undefined;
+        message.failedAt = undefined;
       }
       await message.save();
     }
@@ -884,7 +890,18 @@ const handleStatusUpdate = async (payload) => {
 
         await Broadcast.updateOne(
           { _id: broadcast._id, 'recipients.messageId': messageId },
-          { $set: compactSetUpdate(recipientSet) }
+          {
+            $set: compactSetUpdate(recipientSet),
+            ...(status !== 'failed' ? {
+              $unset: {
+                'recipients.$.error': '',
+                'recipients.$.errorCode': '',
+                'recipients.$.errorDetails': '',
+                'recipients.$.retryable': '',
+                'recipients.$.failedAt': ''
+              }
+            } : {})
+          }
         );
 
         const freshBroadcast = await Broadcast.findById(broadcast._id).select('recipients');

@@ -104,6 +104,15 @@ const buildRecipientFailureSet = (failure, attemptNumber, maxAttempts) => {
   });
 };
 
+const unknownSendStateSet = (message) => ({
+  'recipients.$[recipient].status': 'failed',
+  'recipients.$[recipient].error': message,
+  'recipients.$[recipient].errorCode': 'UNKNOWN_SEND_STATE',
+  'recipients.$[recipient].errorDetails': 'The worker could not confirm whether Meta accepted this message. It is not auto-retried to avoid duplicate delivery.',
+  'recipients.$[recipient].retryable': false,
+  'recipients.$[recipient].failedAt': new Date()
+});
+
 const createWorkerLockId = () => {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return crypto.randomBytes(16).toString('hex');
@@ -1284,12 +1293,15 @@ const processBroadcast = async (broadcastId) => {
     }
 
     if (!claimedTotal) {
+      await refreshBroadcastCounters(broadcast._id, { finalize: true });
       return;
     }
 
     await Broadcast.updateOne(
       { _id: broadcast._id },
-      { $set: { 'recipients.$[recipient].status': 'pending' } },
+      {
+        $set: unknownSendStateSet('Message send state could not be confirmed after processing.')
+      },
       { arrayFilters: [{ 'recipient.status': 'processing' }] }
     );
     const finalBroadcast = await refreshBroadcastCounters(broadcast._id, { finalize: true });
@@ -1310,7 +1322,7 @@ const processBroadcast = async (broadcastId) => {
         {
           $set: {
             status: 'failed',
-            'recipients.$[recipient].status': 'pending'
+            ...unknownSendStateSet('Broadcast worker stopped before confirming this recipient.')
           }
         },
         { arrayFilters: [{ 'recipient.status': 'processing' }] }
@@ -1441,15 +1453,15 @@ exports.processDueScheduledBroadcasts = async () => {
   }).select('_id');
 
   for (const broadcast of broadcasts) {
-    const recoverySet = {
+    const staleProcessingSet = {
+      ...unknownSendStateSet('Stale processing recipient was not auto-retried to prevent duplicate delivery.'),
       status: 'processing',
-      startedAt: new Date(),
-      'recipients.$[recipient].status': 'pending'
+      startedAt: new Date()
     };
 
     await Broadcast.updateOne(
       { _id: broadcast._id },
-      { $set: recoverySet },
+      { $set: staleProcessingSet },
       {
         arrayFilters: [{
           'recipient.status': 'processing',
@@ -1460,7 +1472,7 @@ exports.processDueScheduledBroadcasts = async () => {
 
     await Broadcast.updateOne(
       { _id: broadcast._id },
-      { $set: recoverySet },
+      { $set: staleProcessingSet },
       {
         arrayFilters: [{
           'recipient.status': 'processing',
