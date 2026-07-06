@@ -313,10 +313,17 @@ exports.sendChatMessage = async (req, res) => {
     }
 
     const whatsappService = createWhatsAppService(req.schoolId);
-    const result = await whatsappService.sendMessage(lead.phone, String(message).trim());
+    const normalizedPhone = normalizeChatPhone(lead.phone);
+    const result = await whatsappService.sendMessage(normalizedPhone, String(message).trim());
 
     if (!result.success) {
-      return res.status(400).json({ success: false, message: result.error || 'Failed to send message' });
+      return res.status(400).json({
+        success: false,
+        message: result.error || 'Failed to send message',
+        errorCode: result.errorCode,
+        errorDetails: result.errorDetails,
+        retryable: result.retryable
+      });
     }
 
     await Lead.findByIdAndUpdate(lead._id, leadConversationUpdate({
@@ -332,7 +339,7 @@ exports.sendChatMessage = async (req, res) => {
       leadId: lead._id,
       phoneNumberId: school?.whatsapp?.phoneNumberId,
       wabaId: school?.whatsapp?.wabaId,
-      userNumber: lead.phone,
+      userNumber: normalizedPhone,
       direction: 'outbound',
       message: String(message).trim(),
       messageType: 'text',

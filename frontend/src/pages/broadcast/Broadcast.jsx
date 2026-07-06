@@ -111,6 +111,18 @@ export default function Broadcast() {
     }
   };
 
+  const handleRetryFailed = async (broadcast) => {
+    if (!confirm(`Retry ${broadcast.failedCount || 0} failed recipient(s)?`)) return;
+
+    try {
+      const response = await broadcastAPI.resumeBroadcast(broadcast._id, { retryFailed: true });
+      toast.success(response.data.message || 'Retry started');
+      fetchBroadcasts();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to retry recipients');
+    }
+  };
+
   const handleOpenDetails = async (broadcast) => {
     setSelectedBroadcast(broadcast);
     setLoadingDetails(true);
@@ -388,6 +400,17 @@ export default function Broadcast() {
                             </button>
                           </>
                         )}
+                        {(broadcast.failedCount || 0) > 0 && broadcast.status !== 'processing' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetryFailed(broadcast)}
+                            className="rounded-lg p-2 text-amber-700 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Retry failed recipients"
+                            disabled={!metaReady}
+                          >
+                            <ArrowPathIcon className="h-5 w-5" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleOpenDetails(broadcast)}
@@ -483,7 +506,8 @@ function RecipientReport({ broadcast, loading, onClose }) {
       ['Meta Message ID', (recipient) => recipient.messageId || ''],
       ['Error Code', (recipient) => recipient.errorCode || ''],
       ['Failure Reason', (recipient) => recipient.error || ''],
-      ['Error Details', (recipient) => recipient.errorDetails || '']
+      ['Error Details', (recipient) => recipient.errorDetails || ''],
+      ['Retryable', (recipient) => recipient.retryable === false ? 'No' : recipient.status === 'failed' ? 'Yes' : '']
     ];
     const csv = [
       columns.map(([heading]) => csvCell(heading)).join(','),
@@ -571,7 +595,7 @@ function RecipientReport({ broadcast, loading, onClose }) {
                     <td className="px-4 py-4"><RecipientStatusBadge status={recipient.status} /></td>
                     <td className="px-4 py-4 text-xs font-medium leading-5 text-slate-600">{formatRecipientTimeline(recipient)}</td>
                     <td className="max-w-[190px] break-all px-4 py-4 text-xs font-medium text-slate-500">{recipient.messageId || '-'}</td>
-                    <td className="max-w-[280px] px-4 py-4 text-xs leading-5 text-slate-600">{recipient.status === 'failed' ? <><b className="text-rose-700">{recipient.errorCode ? `#${recipient.errorCode} ` : ''}{recipient.error || 'Meta delivery failed'}</b>{recipient.errorDetails && <span className="mt-1 block">{recipient.errorDetails}</span>}</> : '-'}</td>
+                    <td className="max-w-[280px] px-4 py-4 text-xs leading-5 text-slate-600">{recipient.status === 'failed' ? <><b className="text-rose-700">{recipient.errorCode ? `#${recipient.errorCode} ` : ''}{recipient.error || 'Meta delivery failed'}</b>{recipient.retryable === false && <span className="mt-1 block font-semibold text-amber-700">Meta blocked this delivery; retry is unlikely to help.</span>}{recipient.errorDetails && <span className="mt-1 block">{recipient.errorDetails}</span>}</> : '-'}</td>
                   </tr>
                 ))}
               </tbody>

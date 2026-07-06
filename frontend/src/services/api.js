@@ -124,7 +124,7 @@ export const broadcastAPI = {
   updateBroadcast: (id, data) => api.put(`/broadcasts/${id}`, data),
   deleteBroadcast: (id) => api.delete(`/broadcasts/${id}`),
   startBroadcast: (id) => api.post(`/broadcasts/${id}/start`),
-  resumeBroadcast: (id) => api.post(`/broadcasts/${id}/resume`),
+  resumeBroadcast: (id, data = {}) => api.post(`/broadcasts/${id}/resume`, data),
   getStats: () => api.get('/broadcasts/stats')
 };
 

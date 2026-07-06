@@ -1,10 +1,91 @@
 const School = require('../models/School');
 const WhatsAppAccount = require('../models/WhatsAppAccount');
 const { decryptSecret } = require('../utils/tokenVault');
+const { normalizeMetaError } = require('../utils/metaErrors');
 
 const workingTokenCache = new Map();
 const configCache = new Map();
 const CONFIG_CACHE_TTL_MS = 60 * 1000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const readPositiveInt = (value, fallback, max = 60000) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallback;
+  return Math.min(Math.floor(number), max);
+};
+
+const normalizeRecipientPhone = (phone) => {
+  const raw = String(phone || '').trim();
+  if (!raw) return null;
+
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  digits = digits.replace(/\D/g, '');
+
+  if (digits.length === 10) {
+    const countryCode = String(process.env.DEFAULT_COUNTRY_CODE || '91').replace(/\D/g, '');
+    digits = `${countryCode}${digits}`;
+  }
+
+  if (digits.length < 8 || digits.length > 15) return null;
+  return digits;
+};
+
+const invalidPhoneResult = () => ({
+  success: false,
+  error: 'Invalid WhatsApp phone number. Use country code format, for example 919999999999.',
+  errorCode: 'INVALID_PHONE_NUMBER',
+  retryable: false
+});
+
+const createMetaError = (response, data) => {
+  const normalized = normalizeMetaError(data?.error || {});
+  const error = new Error(normalized.message || 'Meta WhatsApp send failed');
+  error.statusCode = response.status;
+  error.code = normalized.code;
+  error.errorSubcode = data?.error?.error_subcode;
+  error.details = normalized.details;
+  error.retryable = normalized.retryable;
+  return error;
+};
+
+const createFetchError = (error) => {
+  const next = new Error('Could not reach Meta WhatsApp API after retries.');
+  next.code = 'META_FETCH_FAILED';
+  next.details = error?.cause?.message || error?.message || 'Network request failed before Meta accepted the message';
+  next.retryable = true;
+  return next;
+};
+
+const createBadResponseError = (response, bodyText = '') => {
+  const error = new Error('Meta WhatsApp API returned an unreadable response.');
+  error.statusCode = response.status;
+  error.code = 'META_BAD_RESPONSE';
+  error.details = bodyText ? bodyText.slice(0, 500) : `HTTP ${response.status}`;
+  error.retryable = !response.ok || response.status >= 500;
+  return error;
+};
+
+const createMissingMessageIdError = (response, data) => {
+  const error = new Error('Meta WhatsApp API did not return a message ID.');
+  error.statusCode = response.status;
+  error.code = 'META_MISSING_MESSAGE_ID';
+  error.details = JSON.stringify(data || {}).slice(0, 500);
+  error.retryable = false;
+  return error;
+};
+
+const isTransientMetaError = (response, data) => {
+  const message = data?.error?.message || '';
+  const code = data?.error?.code;
+  return response.status === 429
+    || response.status >= 500
+    || code === 4
+    || code === 17
+    || code === 32
+    || /rate|limit|temporary|try again/i.test(message);
+};
 
 class WhatsAppService {
   constructor(schoolId) {
@@ -90,51 +171,97 @@ class WhatsAppService {
       ? [cachedToken, ...tokenCandidates.filter((token) => token !== cachedToken)]
       : tokenCandidates;
     let lastError = null;
+    const maxAttempts = readPositiveInt(process.env.WHATSAPP_SEND_RETRIES, 5, 10);
+    const retryDelayMs = readPositiveInt(process.env.WHATSAPP_SEND_RETRY_DELAY_MS, 2000, 60000);
+    const requestTimeoutMs = readPositiveInt(process.env.WHATSAPP_SEND_TIMEOUT_MS, 45000, 120000);
 
     for (const accessToken of tokens) {
-      const response = await fetch(this.getMetaMessagesUrl(config.phoneNumberId), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        let response;
+        let data;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
-      const data = await response.json();
-
-      if (!response.ok || data.error) {
-        const errorMessage = data.error?.message || 'Meta WhatsApp send failed';
-        const isAuthError = response.status === 401
-          || data.error?.code === 190
-          || /auth|token|permission/i.test(errorMessage);
-        lastError = new Error(errorMessage);
-
-        if (isAuthError && tokens.length > 1) {
-          continue;
+        try {
+          response = await fetch(this.getMetaMessagesUrl(config.phoneNumberId), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            signal: controller.signal,
+            body: JSON.stringify(payload)
+          });
+        } catch (error) {
+          lastError = createFetchError(error);
+          if (attempt < maxAttempts) {
+            await sleep(retryDelayMs * attempt);
+            continue;
+          }
+          throw lastError;
+        } finally {
+          clearTimeout(timeout);
         }
 
-        throw lastError;
+        let bodyText = '';
+        try {
+          bodyText = await response.text();
+          data = bodyText ? JSON.parse(bodyText) : {};
+        } catch (error) {
+          lastError = createBadResponseError(response, bodyText || error.message);
+          if (lastError.retryable && attempt < maxAttempts) {
+            await sleep(retryDelayMs * attempt);
+            continue;
+          }
+          throw lastError;
+        }
+
+        if (!response.ok || data.error) {
+          const errorMessage = data.error?.message || 'Meta WhatsApp send failed';
+          const isAuthError = response.status === 401
+            || data.error?.code === 190
+            || /auth|token|permission/i.test(errorMessage);
+          lastError = createMetaError(response, data);
+
+          if (isAuthError && tokens.length > 1) {
+            break;
+          }
+
+          if (isTransientMetaError(response, data) && attempt < maxAttempts) {
+            await sleep(retryDelayMs * attempt);
+            continue;
+          }
+
+          throw lastError;
+        }
+
+        const messageId = data.messages?.[0]?.id;
+        if (!messageId) {
+          throw createMissingMessageIdError(response, data);
+        }
+
+        workingTokenCache.set(config.phoneNumberId, accessToken);
+
+        return {
+          success: true,
+          messageId,
+          data
+        };
       }
-
-      workingTokenCache.set(config.phoneNumberId, accessToken);
-
-      return {
-        success: true,
-        messageId: data.messages?.[0]?.id,
-        data
-      };
     }
 
     throw lastError || new Error('Meta WhatsApp send failed');
   }
 
   async sendMessage(phone, message) {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'text',
       text: {
         preview_url: false,
@@ -148,17 +275,23 @@ class WhatsAppService {
       console.error('Meta WhatsApp send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
 
   async sendImageMessage(phone, imageUrl, caption = '') {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'image',
       image: {
         link: imageUrl,
@@ -172,17 +305,23 @@ class WhatsAppService {
       console.error('Meta WhatsApp image send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
 
   async sendDocumentMessage(phone, documentUrl, filename = 'brochure.pdf', caption = '') {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'document',
       document: {
         link: documentUrl,
@@ -197,17 +336,23 @@ class WhatsAppService {
       console.error('Meta WhatsApp document send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
 
   async sendVideoMessage(phone, videoUrl, caption = '') {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'video',
       video: {
         link: videoUrl,
@@ -221,12 +366,18 @@ class WhatsAppService {
       console.error('Meta WhatsApp video send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
 
   async sendTemplateMessage(phone, templateId, variables = {}) {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
     let bodyValues = [];
 
@@ -268,7 +419,7 @@ class WhatsAppService {
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'template',
       template: {
         name: templateId,
@@ -285,25 +436,33 @@ class WhatsAppService {
       console.error('Meta WhatsApp template send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
 
   async sendFlowMessage(phone, flow, options = {}) {
+    const normalizedPhone = normalizeRecipientPhone(phone);
+    if (!normalizedPhone) return invalidPhoneResult();
+
     const config = await this.getSchoolConfig();
 
     if (!flow?.metaFlowId) {
       return {
         success: false,
-        error: 'Submit and sync this WhatsApp Flow with Meta before sending it'
+        error: 'Submit and sync this WhatsApp Flow with Meta before sending it',
+        errorCode: 'FLOW_NOT_SYNCED',
+        retryable: false
       };
     }
 
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: phone,
+      to: normalizedPhone,
       type: 'interactive',
       interactive: {
         type: 'flow',
@@ -340,7 +499,10 @@ class WhatsAppService {
       console.error('Meta WhatsApp flow send error:', error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        errorCode: error.code,
+        errorDetails: error.details,
+        retryable: error.retryable
       };
     }
   }
@@ -368,12 +530,38 @@ class WhatsAppService {
           }
 
           results.failed += 1;
-          results.errors.push({ phone: recipient.phone, error: result.error });
-          return { ...recipient, status: 'failed', error: result.error };
+          results.errors.push({
+            phone: recipient.phone,
+            error: result.error,
+            errorCode: result.errorCode,
+            errorDetails: result.errorDetails,
+            retryable: result.retryable
+          });
+          return {
+            ...recipient,
+            status: 'failed',
+            error: result.error,
+            errorCode: result.errorCode,
+            errorDetails: result.errorDetails,
+            retryable: result.retryable
+          };
         } catch (error) {
           results.failed += 1;
-          results.errors.push({ phone: recipient.phone, error: error.message });
-          return { ...recipient, status: 'failed', error: error.message };
+          results.errors.push({
+            phone: recipient.phone,
+            error: error.message,
+            errorCode: error.code,
+            errorDetails: error.details,
+            retryable: error.retryable
+          });
+          return {
+            ...recipient,
+            status: 'failed',
+            error: error.message,
+            errorCode: error.code,
+            errorDetails: error.details,
+            retryable: error.retryable
+          };
         }
       });
 

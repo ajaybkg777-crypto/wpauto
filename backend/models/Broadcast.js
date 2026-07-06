@@ -53,6 +53,12 @@ const broadcastSchema = new mongoose.Schema({
     error: String,
     errorCode: String,
     errorDetails: String,
+    retryable: Boolean,
+    sendAttempts: {
+      type: Number,
+      default: 0
+    },
+    lastAttemptAt: Date,
     sentAt: Date,
     deliveredAt: Date,
     readAt: Date,

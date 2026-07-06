@@ -34,6 +34,19 @@ const getMetaGraphBaseUrl = () => {
 
 const readFirst = (...values) => values.find((value) => value !== undefined && value !== null && value !== '');
 
+const normalizeWhatsAppPhone = (phone) => {
+  const raw = String(phone || '').trim();
+  if (!raw) return '';
+  let digits = raw.replace(/[^\d+]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  digits = digits.replace(/\D/g, '');
+  if (digits.length === 10) {
+    const countryCode = String(process.env.DEFAULT_COUNTRY_CODE || '91').replace(/\D/g, '');
+    digits = `${countryCode}${digits}`;
+  }
+  return digits;
+};
+
 const verifyOnboardingSecret = (req) => {
   const state = readFirst(req.query.state, req.body.state);
   if (!state) return false;
@@ -671,7 +684,8 @@ exports.sendMessage = async (req, res) => {
     }
 
     const whatsappService = createWhatsAppService(req.schoolId);
-    const result = await whatsappService.sendMessage(phone, message);
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+    const result = await whatsappService.sendMessage(normalizedPhone || phone, message);
 
     if (result.success) {
       // Update lead conversation if leadId provided
@@ -690,7 +704,7 @@ exports.sendMessage = async (req, res) => {
         leadId,
         phoneNumberId: school.whatsapp.phoneNumberId,
         wabaId: school.whatsapp.wabaId,
-        userNumber: phone,
+        userNumber: normalizedPhone || phone,
         direction: 'outbound',
         message,
         messageType: 'text',
@@ -715,7 +729,10 @@ exports.sendMessage = async (req, res) => {
     } else {
       res.status(400).json({
         success: false,
-        message: result.error
+        message: result.error,
+        errorCode: result.errorCode,
+        errorDetails: result.errorDetails,
+        retryable: result.retryable
       });
     }
   } catch (error) {
@@ -741,7 +758,8 @@ exports.sendTemplateMessage = async (req, res) => {
     }
 
     const whatsappService = createWhatsAppService(req.schoolId);
-    const result = await whatsappService.sendTemplateMessage(phone, templateId, variables);
+    const normalizedPhone = normalizeWhatsAppPhone(phone);
+    const result = await whatsappService.sendTemplateMessage(normalizedPhone || phone, templateId, variables);
 
     if (result.success) {
       // Update lead if leadId provided
@@ -761,7 +779,7 @@ exports.sendTemplateMessage = async (req, res) => {
         leadId,
         phoneNumberId: school?.whatsapp?.phoneNumberId,
         wabaId: school?.whatsapp?.wabaId,
-        userNumber: phone,
+        userNumber: normalizedPhone || phone,
         direction: 'outbound',
         message: `Template: ${templateId}`,
         messageType: 'template',
@@ -786,7 +804,10 @@ exports.sendTemplateMessage = async (req, res) => {
     } else {
       res.status(400).json({
         success: false,
-        message: result.error
+        message: result.error,
+        errorCode: result.errorCode,
+        errorDetails: result.errorDetails,
+        retryable: result.retryable
       });
     }
   } catch (error) {

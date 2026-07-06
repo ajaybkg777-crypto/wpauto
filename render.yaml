@@ -13,3 +13,21 @@ services:
         value: production
       - key: ENABLE_SCHEDULER
         value: "true"
+      - key: WHATSAPP_SEND_RETRIES
+        value: "5"
+      - key: WHATSAPP_SEND_RETRY_DELAY_MS
+        value: "2000"
+      - key: WHATSAPP_SEND_TIMEOUT_MS
+        value: "45000"
+      - key: BROADCAST_BATCH_SIZE
+        value: "25"
+      - key: BROADCAST_SEND_CONCURRENCY
+        value: "1"
+      - key: BROADCAST_SEND_DELAY_MS
+        value: "1500"
+      - key: BROADCAST_BATCH_DELAY_MS
+        value: "5000"
+      - key: BROADCAST_RECIPIENT_RETRIES
+        value: "5"
+      - key: BROADCAST_PROCESSING_STALE_MS
+        value: "600000"

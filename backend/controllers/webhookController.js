@@ -9,6 +9,7 @@ const WhatsAppFlow = require('../models/WhatsAppFlow');
 const WhatsAppFlowSubmission = require('../models/WhatsAppFlowSubmission');
 const { createWhatsAppService } = require('../services/whatsappService');
 const { compactMessageRecord, leadConversationUpdate, shouldStoreRawPayloads } = require('../utils/storagePolicy');
+const { normalizeMetaError } = require('../utils/metaErrors');
 
 const formatOptions = (options = []) => {
   if (!options.length) return '';
@@ -83,6 +84,15 @@ const countBroadcastRecipients = (recipients = []) => ({
   readCount: recipients.filter((item) => item.status === 'read').length,
   failedCount: recipients.filter((item) => item.status === 'failed').length
 });
+
+const compactSetUpdate = (update = {}) => Object.fromEntries(
+  Object.entries(update).filter(([, value]) => value !== undefined)
+);
+
+const getStatusFailure = (payload = {}) => {
+  if (payload.status !== 'failed') return null;
+  return normalizeMetaError(payload.errors?.[0] || {});
+};
 
 const parseJsonSafely = (value) => {
   if (!value) return null;
@@ -834,6 +844,7 @@ const handleStatusUpdate = async (payload) => {
       : status === 'failed' ? 'failedAt'
         : null;
   const statusTime = new Date();
+  const failure = getStatusFailure(payload);
 
   if (messageId) {
     const message = await Message.findOne({ metaMessageId: messageId });
@@ -841,6 +852,12 @@ const handleStatusUpdate = async (payload) => {
       message.status = status;
       if (updateField) message[updateField] = statusTime;
       if (status === 'read') message.deliveredAt = message.deliveredAt || statusTime;
+      if (failure) {
+        message.error = failure.message;
+        message.errorCode = failure.code;
+        message.errorDetails = failure.details;
+        message.retryable = failure.retryable;
+      }
       await message.save();
     }
 
@@ -858,16 +875,16 @@ const handleStatusUpdate = async (payload) => {
           if (!recipient.deliveredAt) recipientSet['recipients.$.deliveredAt'] = statusTime;
         }
         if (status === 'failed') {
-          const metaError = payload.errors?.[0] || {};
-          recipientSet['recipients.$.error'] = metaError.title || metaError.message || 'Meta delivery failed';
-          recipientSet['recipients.$.errorCode'] = metaError.code ? String(metaError.code) : undefined;
-          recipientSet['recipients.$.errorDetails'] = metaError.error_data?.details || metaError.details || undefined;
+          recipientSet['recipients.$.error'] = failure?.message || 'Meta delivery failed';
+          recipientSet['recipients.$.errorCode'] = failure?.code;
+          recipientSet['recipients.$.errorDetails'] = failure?.details;
+          recipientSet['recipients.$.retryable'] = failure?.retryable;
           recipientSet['recipients.$.failedAt'] = statusTime;
         }
 
         await Broadcast.updateOne(
           { _id: broadcast._id, 'recipients.messageId': messageId },
-          { $set: recipientSet }
+          { $set: compactSetUpdate(recipientSet) }
         );
 
         const freshBroadcast = await Broadcast.findById(broadcast._id).select('recipients');

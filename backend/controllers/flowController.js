@@ -331,7 +331,13 @@ exports.sendFlowMessage = async (req, res) => {
     const message = /131030|allowed list/i.test(result.error || '')
       ? 'Meta test mode: add this recipient phone number to the allowed list in Meta WhatsApp Manager, then try again.'
       : result.error || 'Could not send WhatsApp Flow';
-    return res.status(400).json({ success: false, message });
+    return res.status(400).json({
+      success: false,
+      message,
+      errorCode: result.errorCode,
+      errorDetails: result.errorDetails,
+      retryable: result.retryable
+    });
   }
 
   res.status(200).json({
