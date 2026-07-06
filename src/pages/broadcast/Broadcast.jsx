@@ -553,7 +553,7 @@ function RecipientReport({ broadcast, loading, onClose }) {
           <div className="flex flex-wrap items-center gap-2">
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 outline-none focus:border-[#25D366]">
               <option value="all">All recipients ({recipients.length})</option>
-              {['pending', 'sent', 'delivered', 'read', 'failed'].map((status) => (
+              {['pending', 'sent', 'delivered', 'read', 'failed', 'skipped'].map((status) => (
                 <option value={status} key={status}>{status.charAt(0).toUpperCase() + status.slice(1)} ({counts[status] || 0})</option>
               ))}
             </select>
@@ -613,7 +613,7 @@ function ReportStat({ label, value, tone }) {
 }
 
 function RecipientStatusBadge({ status = 'pending' }) {
-  const tones = { pending: 'bg-slate-100 text-slate-700', sent: 'bg-blue-100 text-blue-700', delivered: 'bg-green-100 text-green-700', read: 'bg-emerald-100 text-emerald-700', failed: 'bg-rose-100 text-rose-700' };
+  const tones = { pending: 'bg-slate-100 text-slate-700', sent: 'bg-blue-100 text-blue-700', delivered: 'bg-green-100 text-green-700', read: 'bg-emerald-100 text-emerald-700', failed: 'bg-rose-100 text-rose-700', skipped: 'bg-amber-100 text-amber-700' };
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold capitalize ${tones[status] || tones.pending}`}>{status}</span>;
 }
 
