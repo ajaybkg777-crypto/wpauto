@@ -522,6 +522,39 @@ const buildDuplicateRecipientSet = (duplicate) => {
   return recipientSet;
 };
 
+const duplicateAttemptSet = (reason = 'This phone was already attempted in this broadcast.') => ({
+  'recipients.$.status': 'skipped',
+  'recipients.$.error': reason,
+  'recipients.$.errorCode': 'DUPLICATE_RECIPIENT',
+  'recipients.$.errorDetails': 'Skipped to ensure the same user receives this broadcast only once.',
+  'recipients.$.retryable': false
+});
+
+const findSameBroadcastAttempt = async (broadcastId, phone, excludeRecipientId) => {
+  const broadcast = await Broadcast.findOne({
+    _id: broadcastId,
+    recipients: {
+      $elemMatch: {
+        phone,
+        ...(excludeRecipientId ? { _id: { $ne: excludeRecipientId } } : {}),
+        $or: [
+          { sendAttempts: { $gt: 0 } },
+          { status: { $in: ['processing', 'failed', ...DELIVERED_STATUSES] } },
+          { messageId: { $exists: true, $ne: '' } }
+        ]
+      }
+    }
+  }).select('recipients');
+
+  return (broadcast?.recipients || []).find((recipient) => {
+    if (normalizeWhatsAppPhone(recipient.phone) !== phone) return false;
+    if (excludeRecipientId && String(recipient._id) === String(excludeRecipientId)) return false;
+    return Number(recipient.sendAttempts || 0) > 0
+      || ['processing', 'failed', ...DELIVERED_STATUSES].includes(recipient.status)
+      || Boolean(recipient.messageId);
+  });
+};
+
 const ensureMetaReady = async (schoolId) => {
   const [school, account] = await Promise.all([
     School.findById(schoolId),
@@ -1024,7 +1057,12 @@ const processBroadcast = async (broadcastId) => {
                 recipients: {
                   $elemMatch: {
                     phone: recipient.phone,
-                    status: { $in: ['processing', ...DELIVERED_STATUSES] }
+                    _id: { $ne: recipient._id },
+                    $or: [
+                      { sendAttempts: { $gt: 0 } },
+                      { status: { $in: ['processing', 'failed', ...DELIVERED_STATUSES] } },
+                      { messageId: { $exists: true, $ne: '' } }
+                    ]
                   }
                 }
               }],
@@ -1072,6 +1110,29 @@ const processBroadcast = async (broadcastId) => {
               );
               return { success: true, duplicateSkipped: true };
             }
+
+            const attemptedDuplicate = await findSameBroadcastAttempt(broadcast._id, normalizeWhatsAppPhone(recipient.phone), recipient._id);
+            if (attemptedDuplicate) {
+              await Broadcast.updateOne(
+                {
+                  _id: broadcast._id,
+                  recipients: {
+                    $elemMatch: {
+                      phone: recipient.phone,
+                      status: 'pending'
+                    }
+                  }
+                },
+                {
+                  $set: duplicateAttemptSet(),
+                  $unset: {
+                    'recipients.$.failedAt': ''
+                  }
+                }
+              );
+              return { success: false, duplicateSkipped: true };
+            }
+
             return { skipped: true };
           }
 
@@ -1388,6 +1449,11 @@ exports.getBroadcastStats = async (req, res) => {
               $sum: {
                 $cond: [{ $eq: ['$recipients.status', 'processing'] }, 1, 0]
               }
+            },
+            totalSkipped: {
+              $sum: {
+                $cond: [{ $eq: ['$recipients.status', 'skipped'] }, 1, 0]
+              }
             }
           }
         }
@@ -1407,7 +1473,8 @@ exports.getBroadcastStats = async (req, res) => {
       totalRead: 0,
       totalFailed: 0,
       totalPending: 0,
-      totalProcessing: 0
+      totalProcessing: 0,
+      totalSkipped: 0
     };
 
     statusStats.forEach(stat => {
