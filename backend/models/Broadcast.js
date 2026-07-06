@@ -114,6 +114,10 @@ const broadcastSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  processingLock: {
+    lockId: String,
+    lockedAt: Date
+  },
   // Type
   type: {
     type: String,
@@ -132,5 +136,6 @@ const broadcastSchema = new mongoose.Schema({
 // Index
 broadcastSchema.index({ schoolId: 1, status: 1 });
 broadcastSchema.index({ schoolId: 1, createdAt: -1 });
+broadcastSchema.index({ 'processingLock.lockedAt': 1 });
 
 module.exports = mongoose.model('Broadcast', broadcastSchema);

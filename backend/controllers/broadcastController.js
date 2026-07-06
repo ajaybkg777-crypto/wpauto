@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const Broadcast = require('../models/Broadcast');
 const Lead = require('../models/Lead');
 const Message = require('../models/Message');
@@ -42,6 +43,12 @@ const getDuplicateSuppressionMs = () => readPositiveInt(
   process.env.BROADCAST_DUPLICATE_SUPPRESSION_MS,
   24 * 60 * 60 * 1000,
   7 * 24 * 60 * 60 * 1000
+);
+
+const getBroadcastLockMs = () => readPositiveInt(
+  process.env.BROADCAST_WORKER_LOCK_MS,
+  30 * 60 * 1000,
+  6 * 60 * 60 * 1000
 );
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -96,6 +103,41 @@ const buildRecipientFailureSet = (failure, attemptNumber, maxAttempts) => {
     'recipients.$.failedAt': requeue ? undefined : new Date()
   });
 };
+
+const createWorkerLockId = () => {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return crypto.randomBytes(16).toString('hex');
+};
+
+const acquireBroadcastLock = async (broadcastId) => {
+  const lockId = createWorkerLockId();
+  const staleLockCutoff = new Date(Date.now() - getBroadcastLockMs());
+  const broadcast = await Broadcast.findOneAndUpdate(
+    {
+      _id: broadcastId,
+      $or: [
+        { 'processingLock.lockedAt': { $exists: false } },
+        { 'processingLock.lockedAt': { $lte: staleLockCutoff } }
+      ]
+    },
+    {
+      $set: {
+        processingLock: {
+          lockId,
+          lockedAt: new Date()
+        }
+      }
+    },
+    { new: true }
+  );
+
+  return broadcast ? { broadcast, lockId } : null;
+};
+
+const releaseBroadcastLock = (broadcastId, lockId) => Broadcast.updateOne(
+  { _id: broadcastId, 'processingLock.lockId': lockId },
+  { $unset: { processingLock: '' } }
+);
 
 const refreshBroadcastCounters = async (broadcastId, options = {}) => {
   const broadcast = await Broadcast.findById(broadcastId);
@@ -879,9 +921,14 @@ const processBroadcast = async (broadcastId) => {
   const workerKey = String(broadcastId);
   if (activeBroadcasts.has(workerKey)) return;
   activeBroadcasts.add(workerKey);
+  let lockId = null;
 
   try {
-    const broadcast = await Broadcast.findById(broadcastId);
+    const lock = await acquireBroadcastLock(broadcastId);
+    if (!lock) return;
+
+    lockId = lock.lockId;
+    const broadcast = lock.broadcast;
     if (!broadcast) return;
     const school = await School.findById(broadcast.schoolId).select('name whatsapp');
     const whatsappService = createWhatsAppService(broadcast.schoolId);
@@ -911,7 +958,14 @@ const processBroadcast = async (broadcastId) => {
     const delayBetweenMessages = readPositiveInt(process.env.BROADCAST_SEND_DELAY_MS, 750, 10000);
     const maxRecipientAttempts = readPositiveInt(process.env.BROADCAST_RECIPIENT_RETRIES, 5, 20);
 
-    const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
+    const seenPendingPhones = new Set();
+    const pendingRecipients = broadcast.recipients.filter((recipient) => {
+      if (recipient.status !== 'pending') return false;
+      const phone = normalizeWhatsAppPhone(recipient.phone);
+      if (!phone || seenPendingPhones.has(phone)) return false;
+      seenPendingPhones.add(phone);
+      return true;
+    });
     let claimedTotal = 0;
 
     for (let i = 0; i < pendingRecipients.length; i += batchSize) {
@@ -1170,6 +1224,9 @@ const processBroadcast = async (broadcastId) => {
       );
     }
   } finally {
+    if (lockId) {
+      await releaseBroadcastLock(broadcastId, lockId);
+    }
     activeBroadcasts.delete(workerKey);
   }
 };
