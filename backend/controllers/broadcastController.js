@@ -178,12 +178,26 @@ const reconcileBroadcastWithMessageLedger = async (broadcast) => {
       recipient.status = message.status;
       changed = true;
     }
-    ['deliveredAt', 'readAt', 'failedAt'].forEach((field) => {
+    ['deliveredAt', 'readAt'].forEach((field) => {
       if (message[field] && !recipient[field]) {
         recipient[field] = message[field];
         changed = true;
       }
     });
+
+    if (message.status === 'failed' && message.failedAt && !recipient.failedAt) {
+      recipient.failedAt = message.failedAt;
+      changed = true;
+    }
+
+    if (recipient.status !== 'failed') {
+      ['failedAt', 'error', 'errorCode', 'errorDetails', 'retryable'].forEach((field) => {
+        if (recipient[field] !== undefined && recipient[field] !== null && recipient[field] !== '') {
+          recipient[field] = undefined;
+          changed = true;
+        }
+      });
+    }
   });
 
   if (!changed) return broadcast;
@@ -1158,7 +1172,14 @@ const processBroadcast = async (broadcastId) => {
                       templateName,
                       templateVariables: variables?.values || []
                     }
-                  })
+                  }),
+                  $unset: {
+                    error: '',
+                    errorCode: '',
+                    errorDetails: '',
+                    retryable: '',
+                    failedAt: ''
+                  }
                 },
                 upsert: true
               }

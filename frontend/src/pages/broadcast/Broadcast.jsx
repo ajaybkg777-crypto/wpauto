@@ -502,7 +502,7 @@ function RecipientReport({ broadcast, loading, onClose }) {
       ['Sent At', (recipient) => formatCsvDate(recipient.sentAt)],
       ['Delivered At', (recipient) => formatCsvDate(recipient.deliveredAt)],
       ['Read At', (recipient) => formatCsvDate(recipient.readAt)],
-      ['Failed At', (recipient) => formatCsvDate(recipient.failedAt)],
+      ['Failed At', (recipient) => recipient.status === 'failed' ? formatCsvDate(recipient.failedAt) : ''],
       ['Meta Message ID', (recipient) => recipient.messageId || ''],
       ['Error Code', (recipient) => recipient.errorCode || ''],
       ['Failure Reason', (recipient) => recipient.error || ''],
@@ -621,9 +621,11 @@ function formatRecipientTimeline(recipient) {
   const rows = [
     ['Sent', recipient.sentAt],
     ['Delivered', recipient.deliveredAt],
-    ['Read', recipient.readAt],
-    ['Failed', recipient.failedAt]
+    ['Read', recipient.readAt]
   ].filter(([, value]) => value);
+  if (recipient.status === 'failed' && recipient.failedAt) {
+    rows.push(['Failed', recipient.failedAt]);
+  }
   return rows.length ? rows.map(([label, value]) => <div key={label}><b>{label}:</b> {new Date(value).toLocaleString()}</div>) : '-';
 }
 
