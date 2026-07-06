@@ -447,7 +447,7 @@ const resolveTemplateVariableValue = (value, recipient, school) => {
   });
 };
 
-const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageType, templateName }) => {
+const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageType }) => {
   if (process.env.BROADCAST_SUPPRESS_RECENT_DUPLICATES === 'false') return null;
 
   const duplicateWindowMs = getDuplicateSuppressionMs();
@@ -457,19 +457,35 @@ const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageTy
     direction: 'outbound',
     status: { $in: DELIVERED_STATUSES },
     message: String(message || ''),
+    messageType,
     createdAt: { $gte: new Date(Date.now() - duplicateWindowMs) }
   };
 
-  if (templateName) {
-    query['rawPayload.templateName'] = templateName;
-  } else {
-    query.messageType = messageType;
-  }
-
   return Message.findOne(query)
     .sort({ createdAt: -1 })
-    .select('+rawPayload metaMessageId status sentAt deliveredAt readAt createdAt')
+    .select('metaMessageId status sentAt deliveredAt readAt createdAt')
     .lean();
+};
+
+const findSameBroadcastDelivery = (broadcast, phone) => {
+  return (broadcast.recipients || []).find((recipient) => {
+    if (!recipient.messageId || !DELIVERED_STATUSES.includes(recipient.status)) return false;
+    return normalizeWhatsAppPhone(recipient.phone) === phone;
+  });
+};
+
+const buildDuplicateRecipientSet = (duplicate) => {
+  const sentAt = duplicate.sentAt || duplicate.createdAt || new Date();
+  const recipientSet = {
+    'recipients.$.status': DELIVERED_STATUSES.includes(duplicate.status) ? duplicate.status : 'sent',
+    'recipients.$.messageId': duplicate.messageId || duplicate.metaMessageId,
+    'recipients.$.sentAt': sentAt
+  };
+
+  if (duplicate.deliveredAt) recipientSet['recipients.$.deliveredAt'] = duplicate.deliveredAt;
+  if (duplicate.readAt) recipientSet['recipients.$.readAt'] = duplicate.readAt;
+
+  return recipientSet;
 };
 
 const ensureMetaReady = async (schoolId) => {
@@ -1022,25 +1038,11 @@ const processBroadcast = async (broadcastId) => {
           if (!result) {
             const messageBody = template?.body || broadcast.message;
             const messageType = templateName ? 'template' : mediaUrl ? 'image' : 'text';
-            const recentDuplicate = await findRecentOutboundDuplicate({
-              schoolId: broadcast.schoolId,
-              phone: normalizedPhone,
-              message: messageBody,
-              messageType,
-              templateName
-            });
-
-            if (recentDuplicate) {
-              const sentAt = recentDuplicate.sentAt || recentDuplicate.createdAt || new Date();
-              const recipientSet = {
-                'recipients.$.status': DELIVERED_STATUSES.includes(recentDuplicate.status) ? recentDuplicate.status : 'sent',
-                'recipients.$.messageId': recentDuplicate.metaMessageId,
-                'recipients.$.sentAt': sentAt
-              };
-
-              if (recentDuplicate.deliveredAt) recipientSet['recipients.$.deliveredAt'] = recentDuplicate.deliveredAt;
-              if (recentDuplicate.readAt) recipientSet['recipients.$.readAt'] = recentDuplicate.readAt;
-
+            const sameBroadcastDuplicate = findSameBroadcastDelivery(broadcast, normalizedPhone);
+            const duplicateRecipientSet = sameBroadcastDuplicate
+              ? buildDuplicateRecipientSet(sameBroadcastDuplicate)
+              : null;
+            if (duplicateRecipientSet) {
               await Broadcast.updateOne(
                 {
                   _id: broadcast._id,
@@ -1052,7 +1054,40 @@ const processBroadcast = async (broadcastId) => {
                   }
                 },
                 {
-                  $set: recipientSet,
+                  $set: duplicateRecipientSet,
+                  $unset: {
+                    'recipients.$.error': '',
+                    'recipients.$.errorCode': '',
+                    'recipients.$.errorDetails': '',
+                    'recipients.$.retryable': '',
+                    'recipients.$.failedAt': ''
+                  }
+                }
+              );
+
+              return { success: true, duplicateSkipped: true };
+            }
+
+            const recentDuplicate = await findRecentOutboundDuplicate({
+              schoolId: broadcast.schoolId,
+              phone: normalizedPhone,
+              message: messageBody,
+              messageType
+            });
+
+            if (recentDuplicate) {
+              await Broadcast.updateOne(
+                {
+                  _id: broadcast._id,
+                  recipients: {
+                    $elemMatch: {
+                      phone: recipient.phone,
+                      status: 'processing'
+                    }
+                  }
+                },
+                {
+                  $set: buildDuplicateRecipientSet(recentDuplicate),
                   $unset: {
                     'recipients.$.error': '',
                     'recipients.$.errorCode': '',

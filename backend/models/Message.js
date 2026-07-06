@@ -70,6 +70,6 @@ const messageSchema = new mongoose.Schema({
 
 messageSchema.index({ schoolId: 1, createdAt: -1 });
 messageSchema.index({ schoolId: 1, status: 1 });
-messageSchema.index({ schoolId: 1, userNumber: 1, direction: 1, message: 1, createdAt: -1 });
+messageSchema.index({ schoolId: 1, userNumber: 1, direction: 1, messageType: 1, message: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Message', messageSchema);
