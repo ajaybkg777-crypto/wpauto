@@ -69,11 +69,18 @@ const runWithConcurrency = async (items, concurrency, worker) => {
   return results;
 };
 
+const getEffectiveRecipientStatus = (recipient = {}) => {
+  if (recipient.status === 'failed') return 'failed';
+  if (recipient.readAt) return 'read';
+  if (recipient.deliveredAt) return 'delivered';
+  return recipient.status || 'pending';
+};
+
 const countRecipientStatuses = (recipients = []) => ({
-  sentCount: recipients.filter((item) => DELIVERED_STATUSES.includes(item.status)).length,
-  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length,
-  readCount: recipients.filter((item) => item.status === 'read').length,
-  failedCount: recipients.filter((item) => item.status === 'failed').length
+  sentCount: recipients.filter((item) => DELIVERED_STATUSES.includes(getEffectiveRecipientStatus(item))).length,
+  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(getEffectiveRecipientStatus(item))).length,
+  readCount: recipients.filter((item) => getEffectiveRecipientStatus(item) === 'read').length,
+  failedCount: recipients.filter((item) => getEffectiveRecipientStatus(item) === 'failed').length
 });
 
 const isStaleReusedRecipient = (broadcast, recipient) => {
@@ -217,6 +224,12 @@ const reconcileBroadcastWithMessageLedger = async (broadcast) => {
           changed = true;
         }
       });
+    }
+
+    const effectiveStatus = getEffectiveRecipientStatus(recipient);
+    if (effectiveStatus !== recipient.status) {
+      recipient.status = effectiveStatus;
+      changed = true;
     }
   });
 
@@ -1458,17 +1471,33 @@ exports.getBroadcastStats = async (req, res) => {
             totalRecipients: { $sum: 1 },
             totalSent: {
               $sum: {
-                $cond: [{ $in: ['$recipients.status', ['sent', 'delivered', 'read']] }, 1, 0]
+                $cond: [{
+                  $or: [
+                    { $in: ['$recipients.status', ['sent', 'delivered', 'read']] },
+                    { $ne: ['$recipients.sentAt', null] }
+                  ]
+                }, 1, 0]
               }
             },
             totalDelivered: {
               $sum: {
-                $cond: [{ $in: ['$recipients.status', ['delivered', 'read']] }, 1, 0]
+                $cond: [{
+                  $or: [
+                    { $in: ['$recipients.status', ['delivered', 'read']] },
+                    { $ne: ['$recipients.deliveredAt', null] },
+                    { $ne: ['$recipients.readAt', null] }
+                  ]
+                }, 1, 0]
               }
             },
             totalRead: {
               $sum: {
-                $cond: [{ $eq: ['$recipients.status', 'read'] }, 1, 0]
+                $cond: [{
+                  $or: [
+                    { $eq: ['$recipients.status', 'read'] },
+                    { $ne: ['$recipients.readAt', null] }
+                  ]
+                }, 1, 0]
               }
             },
             totalFailed: {

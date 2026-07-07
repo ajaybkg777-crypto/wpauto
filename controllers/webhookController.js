@@ -78,11 +78,18 @@ const shouldApplyStatus = (currentStatus, nextStatus) => {
   return (STATUS_RANK[nextStatus] || 0) >= (STATUS_RANK[currentStatus] || 0);
 };
 
+const getEffectiveRecipientStatus = (recipient = {}) => {
+  if (recipient.status === 'failed') return 'failed';
+  if (recipient.readAt) return 'read';
+  if (recipient.deliveredAt) return 'delivered';
+  return recipient.status || 'pending';
+};
+
 const countBroadcastRecipients = (recipients = []) => ({
-  sentCount: recipients.filter((item) => ['sent', 'delivered', 'read'].includes(item.status)).length,
-  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(item.status)).length,
-  readCount: recipients.filter((item) => item.status === 'read').length,
-  failedCount: recipients.filter((item) => item.status === 'failed').length
+  sentCount: recipients.filter((item) => ['sent', 'delivered', 'read'].includes(getEffectiveRecipientStatus(item))).length,
+  deliveredCount: recipients.filter((item) => ['delivered', 'read'].includes(getEffectiveRecipientStatus(item))).length,
+  readCount: recipients.filter((item) => getEffectiveRecipientStatus(item) === 'read').length,
+  failedCount: recipients.filter((item) => getEffectiveRecipientStatus(item) === 'failed').length
 });
 
 const compactSetUpdate = (update = {}) => Object.fromEntries(
