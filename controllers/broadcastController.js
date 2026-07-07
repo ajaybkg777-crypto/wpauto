@@ -471,7 +471,7 @@ const resolveTemplateVariableValue = (value, recipient, school) => {
 };
 
 const findRecentOutboundDuplicate = async ({ schoolId, phone, message, messageType }) => {
-  if (process.env.BROADCAST_SUPPRESS_RECENT_DUPLICATES === 'false') return null;
+  if (process.env.BROADCAST_SUPPRESS_RECENT_DUPLICATES !== 'true') return null;
 
   const duplicateWindowMs = getDuplicateSuppressionMs();
   const query = {
