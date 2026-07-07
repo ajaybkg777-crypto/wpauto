@@ -123,6 +123,22 @@ export default function Broadcast() {
     }
   };
 
+  const handleResendStale = async (broadcast) => {
+    if (!confirm('Fresh send stale reused recipients in this broadcast?')) return;
+
+    try {
+      const response = await broadcastAPI.resumeBroadcast(broadcast._id, { resendStale: true });
+      toast.success(response.data.message || 'Fresh send started');
+      fetchBroadcasts();
+      if (selectedBroadcast?._id === broadcast._id) {
+        const details = await broadcastAPI.getBroadcast(broadcast._id);
+        setSelectedBroadcast(details.data.data);
+      }
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to fresh send recipients');
+    }
+  };
+
   const handleOpenDetails = async (broadcast) => {
     setSelectedBroadcast(broadcast);
     setLoadingDetails(true);
@@ -464,13 +480,14 @@ export default function Broadcast() {
           broadcast={selectedBroadcast}
           loading={loadingDetails}
           onClose={() => setSelectedBroadcast(null)}
+          onResendStale={handleResendStale}
         />
       )}
     </div>
   );
 }
 
-function RecipientReport({ broadcast, loading, onClose }) {
+function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [query, setQuery] = useState('');
   const recipients = broadcast.recipients || [];
@@ -486,6 +503,7 @@ function RecipientReport({ broadcast, loading, onClose }) {
     result[recipient.status || 'pending'] = (result[recipient.status || 'pending'] || 0) + 1;
     return result;
   }, {});
+  const staleReusedCount = recipients.filter((recipient) => isStaleReusedRecipient(broadcast, recipient)).length;
   const exportRecipients = (status) => {
     const rows = status === 'all'
       ? recipients
@@ -569,6 +587,12 @@ function RecipientReport({ broadcast, loading, onClose }) {
               <ArrowDownTrayIcon className="h-4 w-4" />
               Sent CSV
             </button>
+            {staleReusedCount > 0 && (
+              <button type="button" onClick={() => onResendStale?.(broadcast)} className="inline-flex h-11 items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-bold text-amber-800 transition hover:bg-amber-100">
+                <ArrowPathIcon className="h-4 w-4" />
+                Fresh Send ({staleReusedCount})
+              </button>
+            )}
           </div>
         </div>
 
@@ -627,6 +651,17 @@ function formatRecipientTimeline(recipient) {
     rows.push(['Failed', recipient.failedAt]);
   }
   return rows.length ? rows.map(([label, value]) => <div key={label}><b>{label}:</b> {new Date(value).toLocaleString()}</div>) : '-';
+}
+
+function isStaleReusedRecipient(broadcast, recipient) {
+  if (!broadcast?.createdAt || !recipient?.sentAt) return false;
+  if (!['sent', 'delivered', 'read'].includes(recipient.status)) return false;
+
+  const createdAt = new Date(broadcast.createdAt).getTime();
+  const sentAt = new Date(recipient.sentAt).getTime();
+  if (!Number.isFinite(createdAt) || !Number.isFinite(sentAt)) return false;
+
+  return sentAt < createdAt - 60 * 1000;
 }
 
 function csvCell(value) {
