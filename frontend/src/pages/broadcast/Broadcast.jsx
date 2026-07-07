@@ -492,7 +492,8 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
   const [query, setQuery] = useState('');
   const recipients = broadcast.recipients || [];
   const filtered = recipients.filter((recipient) => {
-    const matchesStatus = statusFilter === 'all' || recipient.status === statusFilter;
+    const effectiveStatus = getEffectiveRecipientStatus(recipient);
+    const matchesStatus = statusFilter === 'all' || effectiveStatus === statusFilter;
     const normalizedQuery = query.trim().toLowerCase();
     const matchesQuery = !normalizedQuery || [recipient.name, recipient.phone, recipient.error, recipient.errorDetails]
       .filter(Boolean)
@@ -500,7 +501,8 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
     return matchesStatus && matchesQuery;
   });
   const counts = recipients.reduce((result, recipient) => {
-    result[recipient.status || 'pending'] = (result[recipient.status || 'pending'] || 0) + 1;
+    const effectiveStatus = getEffectiveRecipientStatus(recipient);
+    result[effectiveStatus] = (result[effectiveStatus] || 0) + 1;
     return result;
   }, {});
   const staleReusedCount = recipients.filter((recipient) => isStaleReusedRecipient(broadcast, recipient)).length;
@@ -516,16 +518,16 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
     const columns = [
       ['Name', (recipient) => recipient.name || ''],
       ['Phone', (recipient) => recipient.phone || ''],
-      ['Status', (recipient) => recipient.status || 'pending'],
+      ['Status', (recipient) => getEffectiveRecipientStatus(recipient)],
       ['Sent At', (recipient) => formatCsvDate(recipient.sentAt)],
       ['Delivered At', (recipient) => formatCsvDate(recipient.deliveredAt)],
       ['Read At', (recipient) => formatCsvDate(recipient.readAt)],
-      ['Failed At', (recipient) => recipient.status === 'failed' ? formatCsvDate(recipient.failedAt) : ''],
+      ['Failed At', (recipient) => getEffectiveRecipientStatus(recipient) === 'failed' ? formatCsvDate(recipient.failedAt) : ''],
       ['Meta Message ID', (recipient) => recipient.messageId || ''],
       ['Error Code', (recipient) => recipient.errorCode || ''],
       ['Failure Reason', (recipient) => recipient.error || ''],
       ['Error Details', (recipient) => recipient.errorDetails || ''],
-      ['Retryable', (recipient) => recipient.retryable === false ? 'No' : recipient.status === 'failed' ? 'Yes' : '']
+      ['Retryable', (recipient) => recipient.retryable === false ? 'No' : getEffectiveRecipientStatus(recipient) === 'failed' ? 'Yes' : '']
     ];
     const csv = [
       columns.map(([heading]) => csvCell(heading)).join(','),
@@ -616,10 +618,10 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
                 {filtered.map((recipient) => (
                   <tr key={recipient._id || `${recipient.phone}-${recipient.messageId || 'pending'}`} className="align-top hover:bg-slate-50">
                     <td className="px-6 py-4"><p className="font-bold text-slate-950">{recipient.name || 'Unknown'}</p><p className="mt-1 text-xs font-semibold text-slate-500">{recipient.phone}</p></td>
-                    <td className="px-4 py-4"><RecipientStatusBadge status={recipient.status} /></td>
+                    <td className="px-4 py-4"><RecipientStatusBadge status={getEffectiveRecipientStatus(recipient)} /></td>
                     <td className="px-4 py-4 text-xs font-medium leading-5 text-slate-600">{formatRecipientTimeline(recipient)}</td>
                     <td className="max-w-[190px] break-all px-4 py-4 text-xs font-medium text-slate-500">{recipient.messageId || '-'}</td>
-                    <td className="max-w-[280px] px-4 py-4 text-xs leading-5 text-slate-600">{recipient.status === 'failed' ? <><b className="text-rose-700">{recipient.errorCode ? `#${recipient.errorCode} ` : ''}{recipient.error || 'Meta delivery failed'}</b>{recipient.retryable === false && <span className="mt-1 block font-semibold text-amber-700">Meta blocked this delivery; retry is unlikely to help.</span>}{recipient.errorDetails && <span className="mt-1 block">{recipient.errorDetails}</span>}</> : '-'}</td>
+                    <td className="max-w-[280px] px-4 py-4 text-xs leading-5 text-slate-600">{getEffectiveRecipientStatus(recipient) === 'failed' ? <><b className="text-rose-700">{recipient.errorCode ? `#${recipient.errorCode} ` : ''}{recipient.error || 'Meta delivery failed'}</b>{recipient.retryable === false && <span className="mt-1 block font-semibold text-amber-700">Meta blocked this delivery; retry is unlikely to help.</span>}{recipient.errorDetails && <span className="mt-1 block">{recipient.errorDetails}</span>}</> : '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -647,15 +649,22 @@ function formatRecipientTimeline(recipient) {
     ['Delivered', recipient.deliveredAt],
     ['Read', recipient.readAt]
   ].filter(([, value]) => value);
-  if (recipient.status === 'failed' && recipient.failedAt) {
+  if (getEffectiveRecipientStatus(recipient) === 'failed' && recipient.failedAt) {
     rows.push(['Failed', recipient.failedAt]);
   }
   return rows.length ? rows.map(([label, value]) => <div key={label}><b>{label}:</b> {new Date(value).toLocaleString()}</div>) : '-';
 }
 
+function getEffectiveRecipientStatus(recipient = {}) {
+  if (recipient.status === 'failed') return 'failed';
+  if (recipient.readAt) return 'read';
+  if (recipient.deliveredAt) return 'delivered';
+  return recipient.status || 'pending';
+}
+
 function isStaleReusedRecipient(broadcast, recipient) {
   if (!broadcast?.createdAt || !recipient?.sentAt) return false;
-  if (!['sent', 'delivered', 'read'].includes(recipient.status)) return false;
+  if (!['sent', 'delivered', 'read'].includes(getEffectiveRecipientStatus(recipient))) return false;
 
   const createdAt = new Date(broadcast.createdAt).getTime();
   const sentAt = new Date(recipient.sentAt).getTime();
