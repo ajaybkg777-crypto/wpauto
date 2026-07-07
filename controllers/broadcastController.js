@@ -76,6 +76,17 @@ const countRecipientStatuses = (recipients = []) => ({
   failedCount: recipients.filter((item) => item.status === 'failed').length
 });
 
+const isStaleReusedRecipient = (broadcast, recipient) => {
+  if (!broadcast?.createdAt || !recipient?.sentAt) return false;
+  if (!DELIVERED_STATUSES.includes(recipient.status)) return false;
+
+  const broadcastCreatedAt = new Date(broadcast.createdAt).getTime();
+  const sentAt = new Date(recipient.sentAt).getTime();
+  if (!Number.isFinite(broadcastCreatedAt) || !Number.isFinite(sentAt)) return false;
+
+  return sentAt < broadcastCreatedAt - 60 * 1000;
+};
+
 const compactSetUpdate = (update = {}) => Object.fromEntries(
   Object.entries(update).filter(([, value]) => value !== undefined)
 );
@@ -932,6 +943,7 @@ exports.resumeBroadcast = async (req, res) => {
   try {
     await ensureMetaReady(req.schoolId);
     const retryFailed = req.body?.retryFailed === true;
+    const resendStale = req.body?.resendStale === true;
 
     const broadcast = await Broadcast.findOne({
       _id: req.params.id,
@@ -946,6 +958,7 @@ exports.resumeBroadcast = async (req, res) => {
     }
 
     let retriedFailedCount = 0;
+    let resetStaleCount = 0;
     if (retryFailed) {
       broadcast.recipients.forEach((recipient) => {
         if (recipient.status === 'failed' && recipient.retryable !== false) {
@@ -961,12 +974,33 @@ exports.resumeBroadcast = async (req, res) => {
         }
       });
     }
+    if (resendStale) {
+      broadcast.recipients.forEach((recipient) => {
+        if (isStaleReusedRecipient(broadcast, recipient)) {
+          recipient.status = 'pending';
+          recipient.messageId = undefined;
+          recipient.error = undefined;
+          recipient.errorCode = undefined;
+          recipient.errorDetails = undefined;
+          recipient.retryable = undefined;
+          recipient.sendAttempts = 0;
+          recipient.lastAttemptAt = undefined;
+          recipient.sentAt = undefined;
+          recipient.deliveredAt = undefined;
+          recipient.readAt = undefined;
+          recipient.failedAt = undefined;
+          resetStaleCount += 1;
+        }
+      });
+    }
 
     const pendingCount = broadcast.recipients.filter((recipient) => recipient.status === 'pending').length;
     if (!pendingCount) {
       return res.status(400).json({
         success: false,
-        message: retryFailed
+        message: resendStale
+          ? 'No stale reused recipients found to resend in this broadcast'
+          : retryFailed
           ? 'No failed recipients left to retry in this broadcast'
           : 'No pending recipients left in this broadcast'
       });
@@ -974,7 +1008,7 @@ exports.resumeBroadcast = async (req, res) => {
 
     broadcast.status = 'processing';
     broadcast.startedAt = broadcast.startedAt || new Date();
-    if (retryFailed) {
+    if (retryFailed || resendStale) {
       const counts = countRecipientStatuses(broadcast.recipients);
       broadcast.sentCount = counts.sentCount;
       broadcast.deliveredCount = counts.deliveredCount;
@@ -986,7 +1020,9 @@ exports.resumeBroadcast = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: retryFailed
+      message: resendStale
+        ? `Fresh send started for ${resetStaleCount} stale recipient(s)`
+        : retryFailed
         ? `Retry started for ${retriedFailedCount} failed recipient(s)`
         : `Broadcast resumed for ${pendingCount} pending recipient(s)`,
       data: broadcast
