@@ -519,6 +519,7 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
       ['Name', (recipient) => recipient.name || ''],
       ['Phone', (recipient) => recipient.phone || ''],
       ['Status', (recipient) => getEffectiveRecipientStatus(recipient)],
+      ['Scheduled At', (recipient) => formatCsvDate(recipient.scheduledAt)],
       ['Sent At', (recipient) => formatCsvDate(recipient.sentAt)],
       ['Delivered At', (recipient) => formatCsvDate(recipient.deliveredAt)],
       ['Read At', (recipient) => formatCsvDate(recipient.readAt)],
@@ -645,6 +646,7 @@ function RecipientStatusBadge({ status = 'pending' }) {
 
 function formatRecipientTimeline(recipient) {
   const rows = [
+    ['Scheduled', recipient.scheduledAt],
     ['Sent', recipient.sentAt],
     ['Delivered', recipient.deliveredAt],
     ['Read', recipient.readAt]

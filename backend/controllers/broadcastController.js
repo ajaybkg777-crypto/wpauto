@@ -53,6 +53,25 @@ const getBroadcastLockMs = () => readPositiveInt(
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const getRecipientDueAt = (broadcast, recipient) => recipient?.scheduledAt || broadcast?.scheduledAt || null;
+
+const isRecipientDue = (broadcast, recipient, now = new Date()) => {
+  const dueAt = getRecipientDueAt(broadcast, recipient);
+  return !dueAt || new Date(dueAt).getTime() <= now.getTime();
+};
+
+const getNextPendingSchedule = (broadcast) => {
+  const times = (broadcast?.recipients || [])
+    .filter((recipient) => recipient.status === 'pending')
+    .map((recipient) => getRecipientDueAt(broadcast, recipient))
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter((time) => Number.isFinite(time))
+    .sort((left, right) => left - right);
+
+  return times.length ? new Date(times[0]) : null;
+};
+
 const runWithConcurrency = async (items, concurrency, worker) => {
   const results = new Array(items.length);
   let cursor = 0;
@@ -175,9 +194,21 @@ const refreshBroadcastCounters = async (broadcastId, options = {}) => {
 
   if (options.currentBatch !== undefined) update.currentBatch = options.currentBatch;
   if (options.finalize) {
-    const hasPending = broadcast.recipients.some((item) => item.status === 'pending' || item.status === 'processing');
-    update.status = hasPending ? 'processing' : 'completed';
-    update.completedAt = new Date();
+    const hasProcessing = broadcast.recipients.some((item) => item.status === 'processing');
+    const hasPending = broadcast.recipients.some((item) => item.status === 'pending');
+    const nextPendingSchedule = getNextPendingSchedule(broadcast);
+
+    if (hasProcessing) {
+      update.status = 'processing';
+    } else if (hasPending && nextPendingSchedule) {
+      update.status = 'scheduled';
+      update.scheduledAt = nextPendingSchedule;
+    } else if (hasPending) {
+      update.status = 'processing';
+    } else {
+      update.status = 'completed';
+      update.completedAt = new Date();
+    }
   }
 
   await Broadcast.updateOne({ _id: broadcastId }, { $set: update });
@@ -302,6 +333,126 @@ const getRowPhoneValue = (row = {}) => {
   return phoneEntry ? phoneEntry[1] : '';
 };
 
+const isScheduleDateTimeColumn = (column = '') => {
+  const key = normalizeColumnKey(column);
+  return [
+    'scheduledat',
+    'scheduleat',
+    'scheduleddatetime',
+    'sendat',
+    'senddatetime',
+    'senddate',
+    'datetime',
+    'dateandtime'
+  ].includes(key)
+    || key.includes('scheduledatetime')
+    || key.includes('senddatetime');
+};
+
+const isSendTimeColumn = (column = '') => {
+  const key = normalizeColumnKey(column);
+  return [
+    'sendtime',
+    'time',
+    'scheduletime',
+    'scheduledtime'
+  ].includes(key);
+};
+
+const isBirthDateColumn = (column = '') => {
+  const key = normalizeColumnKey(column);
+  return [
+    'birthdate',
+    'dob',
+    'dateofbirth',
+    'birthday'
+  ].includes(key);
+};
+
+const getRowValueByColumn = (row = {}, predicate) => {
+  const entry = Object.entries(row).find(([key, value]) => predicate(key) && String(value || '').trim());
+  return entry ? String(entry[1] || '').trim() : '';
+};
+
+const parseDateParts = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:\s+.*)?$/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12 && year >= 1900) {
+      return { day, month, year };
+    }
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return {
+      day: parsed.getDate(),
+      month: parsed.getMonth() + 1,
+      year: parsed.getFullYear()
+    };
+  }
+
+  return null;
+};
+
+const parseTimeParts = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const match = raw.match(/^(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(am|pm)?$/i);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const second = Number(match[3] || 0);
+  const meridiem = String(match[4] || '').toLowerCase();
+
+  if (meridiem === 'pm' && hour < 12) hour += 12;
+  if (meridiem === 'am' && hour === 12) hour = 0;
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
+  return { hour, minute, second };
+};
+
+const parseScheduledDateTime = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const dateMatch = raw.match(/^(\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4})(?:\s+(.+))?$/);
+  if (dateMatch) {
+    const date = parseDateParts(dateMatch[1]);
+    const time = parseTimeParts(dateMatch[2] || '00:00');
+    if (date && time) {
+      return new Date(date.year, date.month - 1, date.day, time.hour, time.minute, time.second);
+    }
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getRowScheduledAt = (row = {}) => {
+  const directSchedule = getRowValueByColumn(row, isScheduleDateTimeColumn);
+  if (directSchedule) {
+    const scheduledAt = parseScheduledDateTime(directSchedule);
+    if (scheduledAt) return scheduledAt;
+  }
+
+  const birthDate = getRowValueByColumn(row, isBirthDateColumn);
+  const sendTime = getRowValueByColumn(row, isSendTimeColumn);
+  const date = parseDateParts(birthDate);
+  const time = parseTimeParts(sendTime);
+  if (!date || !time) return null;
+
+  const now = new Date();
+  return new Date(now.getFullYear(), date.month - 1, date.day, time.hour, time.minute, time.second);
+};
+
 const buildRecipients = (leads) => {
   const seen = new Set();
   return leads.reduce((items, lead) => {
@@ -336,7 +487,8 @@ const buildCsvRecipients = (rows = []) => {
     items.push({
       phone,
       name: row.Name || row.name || variables.DriverName || 'Customer',
-      variables
+      variables,
+      scheduledAt: getRowScheduledAt(row) || undefined
     });
     return items;
   }, []);
@@ -726,6 +878,18 @@ exports.createBroadcast = async (req, res) => {
       });
     }
 
+    const rowScheduledAt = recipients
+      .map((recipient) => recipient.scheduledAt)
+      .filter(Boolean)
+      .map((value) => new Date(value).getTime())
+      .filter((time) => Number.isFinite(time))
+      .sort((left, right) => left - right)[0];
+    const effectiveScheduledAt = scheduledAt
+      ? new Date(scheduledAt)
+      : rowScheduledAt
+        ? new Date(rowScheduledAt)
+        : null;
+
     const broadcast = await Broadcast.create({
       schoolId: req.schoolId,
       name,
@@ -740,8 +904,8 @@ exports.createBroadcast = async (req, res) => {
       recipients,
       totalRecipients: recipients.length,
       type: type || 'utility',
-      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
-      status: scheduledAt ? 'scheduled' : 'draft',
+      scheduledAt: effectiveScheduledAt,
+      status: effectiveScheduledAt ? 'scheduled' : 'draft',
       createdBy: req.user.id
     });
 
@@ -1090,7 +1254,10 @@ const processBroadcast = async (broadcastId) => {
     const delayBetweenMessages = readPositiveInt(process.env.BROADCAST_SEND_DELAY_MS, 750, 10000);
     const maxRecipientAttempts = readPositiveInt(process.env.BROADCAST_RECIPIENT_RETRIES, 5, 20);
 
-    const pendingRecipients = broadcast.recipients.filter((recipient) => recipient.status === 'pending');
+    const now = new Date();
+    const pendingRecipients = broadcast.recipients.filter((recipient) => {
+      return recipient.status === 'pending' && isRecipientDue(broadcast, recipient, now);
+    });
     let claimedTotal = 0;
 
     for (let i = 0; i < pendingRecipients.length; i += batchSize) {
@@ -1567,7 +1734,18 @@ exports.processDueScheduledBroadcasts = async () => {
   const broadcasts = await Broadcast.find({
     $or: [
       { status: 'scheduled', scheduledAt: { $lte: new Date() } },
-      { status: 'processing', 'recipients.status': 'pending' },
+      {
+        status: 'processing',
+        recipients: {
+          $elemMatch: {
+            status: 'pending',
+            $or: [
+              { scheduledAt: { $lte: new Date() } },
+              { scheduledAt: { $exists: false } }
+            ]
+          }
+        }
+      },
       {
         status: 'processing',
         recipients: {

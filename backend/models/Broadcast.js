@@ -59,6 +59,7 @@ const broadcastSchema = new mongoose.Schema({
       default: 0
     },
     lastAttemptAt: Date,
+    scheduledAt: Date,
     sentAt: Date,
     deliveredAt: Date,
     readAt: Date,

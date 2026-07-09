@@ -50,6 +50,8 @@ const toLocalDateTimeValue = (date) => {
 };
 
 const parseCsvText = (text = '') => {
+  const firstLine = String(text || '').split(/\r?\n/).find((line) => line.trim()) || '';
+  const delimiter = firstLine.includes('\t') && !firstLine.includes(',') ? '\t' : ',';
   const rows = [];
   let row = [];
   let cell = '';
@@ -64,7 +66,7 @@ const parseCsvText = (text = '') => {
       index += 1;
     } else if (char === '"') {
       quoted = !quoted;
-    } else if (char === ',' && !quoted) {
+    } else if (char === delimiter && !quoted) {
       row.push(cell);
       cell = '';
     } else if ((char === '\n' || char === '\r') && !quoted) {
@@ -838,12 +840,12 @@ function VariableStep({ variables, variablesComplete, values, formData, csvInput
   return (
     <div>
       <SectionHead title="Dynamic Variables" copy="Personalize Meta template placeholders before targeting your audience." />
-      <input ref={csvInputRef} type="file" accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
+      <input ref={csvInputRef} type="file" accept=".csv,.tsv,.txt,.xml,text/csv,text/tab-separated-values,text/plain,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
       <div className="bb-csv-map">
         <div>
           <span>CSV/XML Variable Source</span>
           <b>{formData.csvFilename || 'Upload CSV or XML to map row-wise variables'}</b>
-          <p>{formData.csvRecipients.length ? `${formData.csvRecipients.length} recipients loaded. First number: ${samplePhone}` : 'CSV/XML fields can be used as {{ColumnName}} in template variables.'}</p>
+          <p>{formData.csvRecipients.length ? `${formData.csvRecipients.length} recipients loaded. First number: ${samplePhone}` : 'CSV/TSV/XML fields can be used as {{ColumnName}}. Add Scheduled At or Birth Date + Send Time for row-wise sending.'}</p>
         </div>
         <button type="button" className="bb-soft" onClick={() => csvInputRef.current?.click()}>
           <DocumentArrowUpIcon className="h-5 w-5" />
@@ -934,14 +936,14 @@ function AudienceStep({ formData, leads, csvInputRef, onChange, onLeadSelect, on
         )}
         {formData.recipientType === 'csv' && (
           <div>
-            <input ref={csvInputRef} type="file" accept=".csv,.xml,text/csv,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
+            <input ref={csvInputRef} type="file" accept=".csv,.tsv,.txt,.xml,text/csv,text/tab-separated-values,text/plain,text/xml,application/xml" onChange={onCsvUpload} className="hidden" />
             <div className="bb-image-uploader">
               <div className="bb-image-preview">
                 <DocumentArrowUpIcon className="h-9 w-9" />
               </div>
               <div className="flex-1">
                 <p className="font-bold text-[#0f2b63]">{formData.csvFilename || 'Upload CSV/XML audience'}</p>
-                <p className="mt-1 text-sm text-slate-500">Phone/Mobile/Number field se recipient banega. Baaki fields variables ke liye available rahenge.</p>
+                <p className="mt-1 text-sm text-slate-500">Phone/Mobile/Number field se recipient banega. Scheduled At ya Birth Date + Send Time row-wise sending ke liye use hoga.</p>
                 {!!formData.csvColumns.length && (
                   <p className="mt-1 text-xs font-bold text-emerald-700">
                     {formData.csvRecipients.length} rows: {formData.csvColumns.join(', ')}
