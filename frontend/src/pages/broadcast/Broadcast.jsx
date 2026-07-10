@@ -509,7 +509,7 @@ function RecipientReport({ broadcast, loading, onClose, onResendStale }) {
   const exportRecipients = (status) => {
     const rows = status === 'all'
       ? recipients
-      : recipients.filter((recipient) => recipient.status === status);
+      : recipients.filter((recipient) => getEffectiveRecipientStatus(recipient) === status);
     if (!rows.length) {
       toast.error(`No ${status === 'all' ? '' : `${status} `}recipients available to download`);
       return;
